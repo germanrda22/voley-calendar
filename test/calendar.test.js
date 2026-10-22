@@ -60,6 +60,6 @@ test('ICS: UID estable, escape, plegado UTF-8, duración y cambio de día',async
   const ics=await createICS([g],120,60);
   assert(ics.includes('DTEND:20261018T000000Z'));
   assert(ics.includes('LOCATION:Pabellón\\; centro'));
-  assert(ics.includes('SUMMARY:Anotador: Equipo\\, local vs Visitante'));
+  assert(ics.includes('SUMMARY:🏐 Anotador | Equipo\\, local vs Visitante'));
   assert(ics.split('\r\n').every(line=>new TextEncoder().encode(line).length<=75));
 });

@@ -3,6 +3,7 @@ import {readPDF} from './src/pdf.js';
 import {extractPage} from './src/extract.js';
 import {getDates,createICS,title} from './src/calendar.js';
 import {connect,exportGoogle} from './src/google.js';
+import {orderedGames,eventGame,prepareEvent,duplicateGroups} from './src/prepare.js';
 const $=id=>document.getElementById(id);
 let games=[],files=[],busy=false;
 const progress=text=>$('status').textContent=text;
@@ -16,7 +17,15 @@ function refreshNames(){
   $('refereeSelect').value=names.some(([key])=>key===previous)?previous:'';
   $('namesStatus').textContent=`${games.length} partidos detectados · ${names.length} árbitros únicos`;
 }
-function roleGame(g){return {...g,role:g.roleOverrides?.[selectedName()]||functionsFor(g,selectedName()).join(' / '),referee:$('referee').value||$('refereeSelect').selectedOptions[0]?.textContent||''};}
+const refereeName=()=>$('referee').value||referees(games).find(([key])=>key===selectedName())?.[1]||'';
+function roleGame(g){return eventGame(g,refereeName());}
+function updateSummary(){
+  const selected=orderedGames(games,selectedName(),$('duration').value).filter(g=>g.selected);
+  const duplicates=duplicateGroups(selected.map(roleGame),$('duration').value);
+  $('exportSummary').textContent=selectedName()?`${selected.length} partido(s) seleccionado(s) para exportar · Europe/Madrid`:'Selecciona un árbitro para preparar los eventos.';
+  $('duplicateStatus').textContent=duplicates.length?`Posibles duplicados: ${duplicates.length} grupo(s). Corrige o deselecciona las repeticiones antes de exportar.\n`+duplicates.map(group=>`${group[0].date} ${group[0].time} · ${group[0].home} vs ${group[0].away} (${group.length} partidos)`).join('\n'):'';
+  for(const card of $('games').children)if(card.dataset.gameId)card.classList.toggle('possible-duplicate',duplicates.some(group=>group.some(g=>g.id===card.dataset.gameId)));
+}
 function validation(g){
   const errors=[]; const value=roleGame(g);
   for(const [key,label] of [['date','fecha'],['time','hora'],['home','equipo local'],['away','equipo visitante'],['role','función arbitral']]) if(!value[key]?.trim())errors.push(`Falta ${label}`);
@@ -25,30 +34,38 @@ function validation(g){
   return errors;
 }
 function render(){
-  const visible=filterGames(games,selectedName());
+  const visible=orderedGames(games,selectedName(),$('duration').value);
   $('count').textContent=`${visible.length} partido(s)${selectedName()?' del árbitro':''}`;
   const container=$('games'); container.replaceChildren();
   if(!visible.length){const p=document.createElement('p');p.className='muted';p.textContent='No hay partidos para mostrar. Sube documentos o añade uno manualmente.';container.append(p);}
   for(const g of visible){
-    const card=document.createElement('article');card.className='game';
-    const top=document.createElement('div');top.className='game-top';const label=document.createElement('label'),cb=document.createElement('input');cb.type='checkbox';cb.style.width='auto';cb.style.display='inline';cb.checked=g.selected;cb.onchange=()=>g.selected=cb.checked;label.append(cb,document.createTextNode(' Exportar partido'));
+    const card=document.createElement('article');card.className='game';card.dataset.gameId=g.id;
+    const top=document.createElement('div');top.className='game-top';const label=document.createElement('label'),cb=document.createElement('input');cb.type='checkbox';cb.style.width='auto';cb.style.display='inline';cb.checked=g.selected;cb.onchange=()=>{g.selected=cb.checked;updateSummary();};label.append(cb,document.createTextNode(' Exportar partido'));
     const remove=document.createElement('button');remove.className='remove';remove.textContent='Eliminar';remove.onclick=()=>{games=games.filter(x=>x!==g);refreshNames();render();};top.append(label,remove);card.append(top);
     const grid=document.createElement('div');grid.className='game-grid';
     const state=document.createElement('p'),end=document.createElement('p');end.className='muted';
+    const preview=document.createElement('details'),previewLabel=document.createElement('summary'),previewText=document.createElement('p');previewLabel.textContent='Vista previa del evento';previewText.className='event-preview';preview.append(previewLabel,previewText);
     const update=()=>{const errors=validation(g);state.className=errors.length?'warning':'ok';state.textContent=errors.length?'Revisión necesaria: '+[...new Set(errors)].join(' · '):'Validado';try{end.textContent='Finalización: '+new Intl.DateTimeFormat('es-ES',{timeZone:'Europe/Madrid',dateStyle:'short',timeStyle:'short'}).format(getDates(g,$('duration').value).end);}catch{end.textContent='Finalización pendiente de fecha y hora válidas';}};
     const fields=[['date','Fecha','date'],['time','Hora de inicio','time'],['category','Categoría','text'],['competition','Competición / grupo','text'],['home','Equipo local','text'],['away','Equipo visitante','text'],['venue','Pabellón','text'],['first','Primer árbitro','text'],['second','Segundo árbitro','text'],['scorer','Anotador','text'],['roleOverride','Función del árbitro seleccionado','select'],['duration','Duración propia (min, opcional)','number'],['dstChoice','Hora repetida en octubre','dst'],['notes','Texto original / observaciones','text']];
     for(const [key,text,type] of fields){
       const field=document.createElement('label');field.textContent=text;let input;
       if(type==='select'||type==='dst'){input=document.createElement('select');const options=type==='dst'?[['','Elegir si la hora es ambigua'],['first','Primera ocurrencia (verano)'],['second','Segunda ocurrencia (invierno)']]:[['',functionsFor(g,selectedName()).join(' / ')||'Sin identificar'],...['Primer árbitro','Segundo árbitro','Anotador','Otro'].map(v=>[v,v])];for(const [value,text]of options)input.add(new Option(text,value));}
       else{input=document.createElement('input');input.type=type;if(type==='number'){input.min='1';input.max='1440';}}
-      input.value=key==='roleOverride'?(g.roleOverrides?.[selectedName()]||''):(g[key]||'');
-      input.oninput=()=>{if(key==='roleOverride'){g.roleOverrides||={};g.roleOverrides[selectedName()]=input.value;}else g[key]=input.value;g.reviewed=false;reviewCheck.checked=false;update();};
+      input.value=key==='roleOverride'?(g.roleOverrides?.[selectedName()]||''):(g[key]??'');
+      if(key==='duration')input.placeholder=`${$('duration').value} min (predeterminada)`;
+      input.oninput=()=>{if(key==='roleOverride'){g.roleOverrides||={};g.roleOverrides[selectedName()]=input.value;}else g[key]=input.value;g.reviewed=false;reviewCheck.checked=false;update();updatePreview();updateSummary();};
+      if(key==='date'||key==='time'||key==='dstChoice')input.onchange=render;
       if(refereeKeys.includes(key))input.onchange=()=>{refreshNames();render();};
       field.append(input);grid.append(field);
     }
     const review=document.createElement('label'),reviewCheck=document.createElement('input');reviewCheck.type='checkbox';reviewCheck.style.width='auto';reviewCheck.checked=g.reviewed;reviewCheck.onchange=()=>{g.reviewed=reviewCheck.checked;update();};review.append(reviewCheck,document.createTextNode(' He revisado las advertencias y contrastado las funciones con el documento'));
-    card.append(grid,end,state,review);update();container.append(card);
+    function updatePreview(){
+      try{const event=prepareEvent(g,refereeName(),$('duration').value);previewText.textContent=[event.summary,`Ubicación: ${event.location || 'Sin especificar'}`,event.description,`Zona horaria: ${event.start.timeZone}`].join('\n');}
+      catch(e){previewText.textContent=`${title(roleGame(g))}\n${e.message}`;}
+    }
+    card.append(grid,end,state,review,preview);update();updatePreview();container.append(card);
   }
+  updateSummary();
 }
 $('refereeSelect').onchange=()=>{$('referee').value='';render();};
 $('referee').oninput=render;
@@ -93,9 +110,10 @@ async function scan(useOCR=false){
 $('scan').onclick=()=>scan();$('ocr').onclick=()=>scan(true);
 function selectedGames(){
   if(!selectedName())throw Error('Selecciona o escribe el nombre del árbitro antes de exportar');
-  const selected=filterGames(games,selectedName()).filter(g=>g.selected);
+  const selected=orderedGames(games,selectedName(),$('duration').value).filter(g=>g.selected);
   if(!selected.length)throw Error('Selecciona al menos un partido');
   for(const g of selected)if(validation(g).length)throw Error('Completa y revisa todos los partidos seleccionados: '+validation(g).join(' · '));
+  if(duplicateGroups(selected.map(roleGame),$('duration').value).length)throw Error('Hay posibles duplicados seleccionados. Corrígelos o deselecciona las repeticiones antes de exportar.');
   return selected.map(roleGame);
 }
 const reminder=()=>{const n=Number($('reminder').value);if(!Number.isInteger(n)||n<0||n>10080)throw Error('Recordatorio válido: de 0 a 10080 minutos');return n;};

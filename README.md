@@ -26,11 +26,20 @@ Publica `dist/` en un hosting HTTPS. No abras `index.html` directamente: los mó
 
 Volver a analizar documentos sustituye los resultados actuales. No hay persistencia de partidos al recargar la página.
 
+## Revisión de eventos
+
+Los partidos del árbitro se ordenan cronológicamente; las fechas u horas inválidas quedan al final para su revisión. Las tarjetas muestran la finalización calculada y una vista previa del título, ubicación y descripción. El título exportado sigue el formato `🏐 Función arbitral | Equipo local vs Equipo visitante`. La descripción incluye categoría, función y los demás árbitros disponibles, con sus funciones originales.
+
+La duración inicial es de 120 minutos. El campo de duración propia permite cambiarla por partido; dejarlo vacío utiliza la duración general. Se conservan los campos editados y la selección al cambiar de árbitro, además de las correcciones de función guardadas para cada árbitro.
+
+Antes de exportar se muestra el total seleccionado y se buscan posibles duplicados con el mismo instante de inicio, equipos y árbitro, ignorando tildes, mayúsculas y espacios repetidos. Las diferencias de función o pabellón no ocultan una posible repetición. Los grupos se resaltan en las tarjetas y deben corregirse o deseleccionarse antes de exportar; no se eliminan automáticamente. Este cambio conserva la integración OAuth existente sin añadir nuevas integraciones.
+
 ## Extracción y límites
 
 - `src/pdf.js`: PDF.js y worker empaquetados, lectura de todas las páginas, progreso y renderizado para OCR opcional.
 - `src/extract.js`: reconstrucción por coordenadas y fechas que anclan las filas; no se dividen nombres por espacios. Las columnas están calibradas para el documento de la Delegación Granadina incluido en `fixtures/`. Se conservan huecos entre primer árbitro, segundo árbitro y anotador. Un formato desconocido exige completar los campos y verificar las funciones. Cambios de plantilla requieren ajustar `granadaLayout` y añadir ejemplos a las pruebas.
 - `src/model.js`: normalización, nombres únicos, filtrado y funciones arbitrales.
+- `src/prepare.js`: orden cronológico, preparación de eventos para revisión y detección de duplicados dentro de la selección, separado de la extracción PDF.
 - `src/calendar.js`: fechas de Madrid, duración, identificadores SHA-256 estables y archivo ICS con escape y plegado UTF-8. Los instantes se exportan en UTC después de convertir desde Europe/Madrid, evitando depender de la zona del dispositivo. Las horas inexistentes en marzo se rechazan; las horas repetidas en octubre requieren elegir una ocurrencia.
 - `src/google.js`: OAuth, calendarios editables, consulta paginada de duplicados, IDs deterministas y resultados por evento. Los tokens permanecen en memoria.
 

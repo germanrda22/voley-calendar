@@ -426,3 +426,31 @@ transition:none!important}
 .brand-icon svg{width:30px;height:30px;color:#fff}.hero-ball>svg{width:160px;height:160px;color:#ac2033;opacity:.8}
 input[type=checkbox]{display:inline-block}
 input,select,button,summary,a{scroll-margin-block:24px 150px}
+/* Vistas con History API. Los controles se montan una sola vez. */
+.shell>header{background:#ac2033;color:white;border:0;border-radius:0 0 18px 18px;padding:18px 24px;min-height:100px}
+header .brand,header .brand small,header nav a{color:white}
+header .brand-icon{background:#ffffff18}
+header nav{display:flex;flex-wrap:wrap;gap:8px}
+header nav a{padding:9px 12px;border-radius:8px;font-size:12px}
+header nav a:hover,header nav a[aria-current=page]{background:#ffffff20;color:white}
+header #googleConnection{color:#6e2332;background:#fff;border:0}
+.page-intro{padding:42px 0 26px}
+.page-intro h1{font-size:clamp(30px,4vw,46px);letter-spacing:-1.4px;line-height:1.15;margin:0 0 14px}
+.page-intro>p{color:var(--muted);max-width:780px;font-size:14px}
+.page-intro h1:focus{outline:none}
+.work-notice{padding:12px 16px;border:1px solid #e7c3cb;background:#fff3f5;border-radius:10px;line-height:1.7}
+.home-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;margin:12px 0 60px}
+.home-card{display:flex;flex-direction:column;padding:32px;border:1px solid var(--line);border-radius:18px;background:white;box-shadow:0 4px 22px #35182205;text-decoration:none;color:var(--ink)}
+.home-card:hover{border-color:#ac2033;box-shadow:0 8px 28px #ac203312}
+.home-icon{display:grid;place-items:center;width:54px;height:54px;background:#f8e9ed;color:var(--red);border-radius:14px;font-size:30px;margin-bottom:26px}
+.home-card h2{font-size:25px;letter-spacing:-.6px;margin:0 0 12px}
+.home-card p{color:var(--muted);font-size:14px;line-height:1.8;margin:0 0 28px}
+.home-action{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:auto;padding-top:18px;border-top:1px solid var(--line);font-size:13px;font-weight:750;color:var(--red)}
+.home-action>span{font-size:22px}
+.review-column{display:flex;flex-direction:column}
+body[data-page="/revision"] #export-step{order:-1}
+body[data-page="/revision"] .game-top label,body[data-page="/revision"] .game-top .remove{display:none}
+body[data-page="/revision"] .game-top{display:none}
+body:not([data-page="/nueva"]) .shell{padding-bottom:32px}
+@media(max-width:1000px){.shell>header{gap:14px}header nav{order:3;width:100%;margin:0}header nav a{flex:1;text-align:center}}
+@media(max-width:760px){.shell>header{padding:16px;border-radius:0 0 14px 14px;gap:12px}.brand{margin-right:auto}header nav{display:flex;gap:5px}header nav a{font-size:11px;padding:10px 5px}.page-intro{padding:28px 0 20px}.page-intro>p{font-size:13px}.home-grid{grid-template-columns:minmax(0,1fr);gap:16px;margin-bottom:24px}.home-card{padding:24px}.home-card h2{font-size:23px}.home-icon{margin-bottom:20px}.home-card p{font-size:13px}}

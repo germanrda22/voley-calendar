@@ -1,3 +1,4 @@
+import {setupRouter} from './src/router.js';
 import {blank, normalize, referees, functionsFor, filterGames, refereeKeys} from './src/model.js';
 import {readPDF} from './src/pdf.js';
 import {extractPage} from './src/extract.js';
@@ -10,6 +11,7 @@ import {setupSyncUI} from './src/sync-ui.js';
 import {findHeaderIntervals,detectRound,automaticScope} from './src/round.js';
 const $=id=>document.getElementById(id);
 let games=[],files=[],busy=false;
+let router;
 let appleBusy=false,appleDownload;
 let lastExtractionReliable=false,syncBusy=false;
 let extractionIssues=[];
@@ -173,6 +175,7 @@ function syncGoogleUI(){
   $('retryGoogle').disabled=syncBusy||googleBusy||googleConnecting||busy||!connected||!batch||batch.calendar!==$('calendar').value;
   $('scan').disabled=syncBusy||googleBusy||busy||!files.length;$('images').disabled=syncBusy||googleBusy||busy;$('ocr').disabled=syncBusy||googleBusy||busy;
   $('googleConnection').textContent=googleConnecting?'Conectando…':connected?'Cuenta conectada':'Sin conexión con Google';
+  router?.refresh();
   syncController?.refresh();
 }
 function calendarDetails(){
@@ -248,3 +251,5 @@ const syncController=setupSyncUI({service:googleService,
   canUse:()=>googleService.isConnected()&&!!$('calendar').value&&!googleBusy&&!googleConnecting&&!busy
 });
 render();
+
+router=setupRouter({hasWork:()=>files.length>0||games.length>0,isBusy:()=>busy||googleBusy||syncBusy||googleConnecting});

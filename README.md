@@ -1,5 +1,17 @@
 # Voley Calendar
 
+## Páginas y navegación
+
+Ejecuta `npm run dev` y abre la dirección que indique Vite (por defecto `http://localhost:5173`):
+
+- `/`: inicio con las opciones **Nueva designación** y **Revisar cambios**.
+- `/nueva`: PDF, árbitro, edición y selección de partidos, importación a Google y exportación ICS.
+- `/revision`: PDF actualizado, calendario, jornada, comparación, resolución manual, confirmación de eliminaciones y reintentos.
+
+La navegación utiliza History API, admite atrás/adelante y mantiene los mismos controles, documento, ediciones, resultados y sesión de Google en memoria. Al cambiar de página se informa de que el trabajo se conserva; al recargar o abandonar con documentos cargados u operaciones en curso, el navegador solicita confirmación. Recargar sí reinicia el trabajo y la conexión: no se guardan tokens ni documentos en almacenamiento persistente.
+
+`vercel.json` dirige las solicitudes directas a `/nueva` y `/revision` a `index.html`; los recursos usan rutas absolutas. Esta configuración se aplicará en el próximo despliegue. No es necesario añadir una biblioteca de rutas.
+
 Importa designaciones arbitrales PDF o imágenes, filtra por árbitro, revisa los datos y exporta a Apple Calendar o Google Calendar. El repositorio original era JavaScript y HTML estático, sin React: se conserva esa interfaz y se utiliza Vite para empaquetar PDF.js y su worker local.
 
 ## Desarrollo

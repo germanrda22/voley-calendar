@@ -42,6 +42,7 @@ function validation(g){
   if(g.issues.length&&!g.reviewed)errors.push(...g.issues);
   return errors;
 }
+const cardViews=new Map(); // Estado visual de los desplegables, independiente de los partidos.
 function render(){
   const visible=orderedGames(games,selectedName(),$('duration').value);
   $('count').textContent=`${visible.length} partido(s)${selectedName()?' del árbitro':''}`;
@@ -51,10 +52,15 @@ function render(){
     const card=document.createElement('article');card.className='game';card.dataset.gameId=g.id;
     const top=document.createElement('div');top.className='game-top';const label=document.createElement('label'),cb=document.createElement('input');cb.type='checkbox';cb.style.width='auto';cb.style.display='inline';cb.checked=g.selected;cb.onchange=()=>{g.selected=cb.checked;updateSummary();};label.append(cb,document.createTextNode(' Exportar partido'));
     const remove=document.createElement('button');remove.className='remove';remove.textContent='Eliminar';remove.onclick=()=>{games=games.filter(x=>x!==g);refreshNames();render();};top.append(label,remove);card.append(top);
+    const view=cardViews.get(g.id)||{editing:!!g.manual};
+    const overview=document.createElement('div');overview.className='game-overview';
+    const teams=document.createElement('h3'),meta=document.createElement('p');meta.className='game-meta';overview.append(teams,meta);card.append(overview);
+    const editor=document.createElement('details'),editorTitle=document.createElement('summary');editor.className='game-editor';editorTitle.textContent='Editar partido';editor.open=view.editing;editor.ontoggle=()=>{view.editing=editor.open;cardViews.set(g.id,view);};editor.append(editorTitle);
     const grid=document.createElement('div');grid.className='game-grid';
+    const advanced=document.createElement('details'),advancedTitle=document.createElement('summary'),advancedGrid=document.createElement('div');advancedTitle.textContent='Árbitros y otros datos';advancedGrid.className='game-grid';advanced.open=!!view.advanced;advanced.ontoggle=()=>{view.advanced=advanced.open;cardViews.set(g.id,view);};advanced.append(advancedTitle,advancedGrid);
     const state=document.createElement('p'),end=document.createElement('p');end.className='muted';
     const preview=document.createElement('details'),previewLabel=document.createElement('summary'),previewText=document.createElement('p');previewLabel.textContent='Vista previa del evento';previewText.className='event-preview';preview.append(previewLabel,previewText);
-    const update=()=>{const errors=validation(g);state.className=errors.length?'warning':'ok';state.textContent=errors.length?'Revisión necesaria: '+[...new Set(errors)].join(' · '):'Validado';try{end.textContent='Finalización: '+new Intl.DateTimeFormat('es-ES',{timeZone:'Europe/Madrid',dateStyle:'short',timeStyle:'short'}).format(getDates(g,$('duration').value).end);}catch{end.textContent='Finalización pendiente de fecha y hora válidas';}};
+    const update=()=>{teams.textContent=`${g.home||'Equipo local'} vs ${g.away||'Equipo visitante'}`;meta.textContent=[g.date,g.time,g.category,g.venue,roleGame(g).role].filter(Boolean).join(' · ');const errors=validation(g);state.className=errors.length?'warning':'ok';state.textContent=errors.length?'Revisión necesaria: '+[...new Set(errors)].join(' · '):'Validado';try{end.textContent='Finalización: '+new Intl.DateTimeFormat('es-ES',{timeZone:'Europe/Madrid',dateStyle:'short',timeStyle:'short'}).format(getDates(g,$('duration').value).end);}catch{end.textContent='Finalización pendiente de fecha y hora válidas';}};
     const fields=[['date','Fecha','date'],['time','Hora de inicio','time'],['category','Categoría','text'],['competition','Competición / grupo','text'],['home','Equipo local','text'],['away','Equipo visitante','text'],['venue','Pabellón','text'],['first','Primer árbitro','text'],['second','Segundo árbitro','text'],['scorer','Anotador','text'],['roleOverride','Función del árbitro seleccionado','select'],['duration','Duración propia (min, opcional)','number'],['dstChoice','Hora repetida en octubre','dst'],['notes','Texto original / observaciones','text']];
     for(const [key,text,type] of fields){
       const field=document.createElement('label');field.textContent=text;let input;
@@ -65,14 +71,14 @@ function render(){
       input.oninput=()=>{if(key==='roleOverride'){g.roleOverrides||={};g.roleOverrides[selectedName()]=input.value;}else g[key]=input.value;g.reviewed=false;reviewCheck.checked=false;update();updatePreview();updateSummary();};
       if(key==='date'||key==='time'||key==='dstChoice')input.onchange=render;
       if(refereeKeys.includes(key))input.onchange=()=>{refreshNames();render();};
-      field.append(input);grid.append(field);
+      field.append(input);(['competition','first','second','scorer','dstChoice','notes'].includes(key)?advancedGrid:grid).append(field);
     }
     const review=document.createElement('label'),reviewCheck=document.createElement('input');reviewCheck.type='checkbox';reviewCheck.style.width='auto';reviewCheck.checked=g.reviewed;reviewCheck.onchange=()=>{g.reviewed=reviewCheck.checked;update();syncGoogleUI();};review.append(reviewCheck,document.createTextNode(' He revisado las advertencias y contrastado las funciones con el documento'));
     function updatePreview(){
       try{const event=prepareEvent(g,refereeName(),$('duration').value);previewText.textContent=[event.summary,`Ubicación: ${event.location || 'Sin especificar'}`,event.description,`Zona horaria: ${event.start.timeZone}`].join('\n');}
       catch(e){previewText.textContent=`${title(roleGame(g))}\n${e.message}`;}
     }
-    card.append(grid,end,state,review,preview);update();updatePreview();container.append(card);
+    editor.append(grid,advanced);review.className='review-check';card.append(end,state,editor,review,preview);update();updatePreview();container.append(card);
   }
   updateSummary();
 }

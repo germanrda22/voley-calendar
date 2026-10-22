@@ -35,10 +35,10 @@ export function setupSyncUI({service,getGames,getContext,setBusy,canUse,document
   function render(){
     $('syncRows').replaceChildren();$('syncDiagnostics').textContent=formatSyncDiagnostics(plan);if(!plan){$('syncSummary').textContent='';return;}
     for(const row of plan.rows){
-      const article=doc.createElement('article');article.className='game sync-row';
+      const article=doc.createElement('article');article.className='game sync-row';article.dataset.status=row.status;
       const label=doc.createElement('label'),checkbox=doc.createElement('input');checkbox.type='checkbox';checkbox.className='inline-check';checkbox.checked=!!row.selected;checkbox.disabled=working||!row.action||row.status==='doubtful'||row.result?.status==='success';
       checkbox.onchange=()=>{row.selected=checkbox.checked;refresh();};
-      label.append(checkbox,doc.createTextNode(` ${labels[row.status]}${row.action==='metadata'?' · Registrar identificación de jornada':''}`));article.append(label);
+      label.className='sync-status';label.append(checkbox,doc.createTextNode(` ${labels[row.status]}${row.action==='metadata'?' · Registrar identificación de jornada':''}`));article.append(label);
       const info=doc.createElement('p'),data=row.game||matchData(row.event);info.textContent=`${data.home||'—'} vs ${data.away||'—'} · ${data.category||'Sin categoría'} · ${data.role||'Sin función'} · ${data.date||''} ${data.time||''} · ${data.venue||row.event?.location||''}`;article.append(info);
       if(row.reason){const note=doc.createElement('p');note.className='warning';note.textContent=row.reason;article.append(note);}
       const before=row.event,after=row.payload;
@@ -52,7 +52,7 @@ export function setupSyncUI({service,getGames,getContext,setBusy,canUse,document
         oldText.textContent='Anterior: '+(field==='start'||field==='end'?formatDate(oldValue):oldValue||'—');
         newText.textContent='Nuevo: '+(field==='start'||field==='end'?formatDate(values[field]):values[field]||'—');block.append(name,oldText,newText);table.append(block);
       }
-      article.append(table);
+      const comparison=doc.createElement('details'),comparisonTitle=doc.createElement('summary');comparisonTitle.textContent='Ver comparación del evento';comparison.open=row.status==='modified'||row.status==='possible-delete';comparison.append(comparisonTitle,table);article.append(comparison);
       if(row.kind==='legacy-link'&&row.action===null){
         const link=doc.createElement('button');link.className='secondary';link.textContent='Vincular manualmente este evento a la jornada';link.disabled=working;
         link.onclick=async()=>{

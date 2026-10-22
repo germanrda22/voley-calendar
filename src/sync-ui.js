@@ -1,16 +1,16 @@
 import {managed,matchData} from './sync.js';
 import {detectRound,confirmRound,automaticScope} from './round.js';
 
-const labels={new:'Nuevo',unchanged:'Sin cambios',modified:'Modificado','possible-delete':'Posible eliminación',doubtful:'Coincidencia dudosa'};
+const labels={new:'Nuevo',unchanged:'Sin cambios',modified:'Modificado','possible-delete':'Posible retirada',doubtful:'Coincidencia dudosa'};
 const fieldLabels={summary:'Equipos y función',start:'Inicio',end:'Finalización',location:'Pabellón',description:'Categoría, competición y árbitros'};
 const formatDate=value=>{if(!value)return '—';try{return new Intl.DateTimeFormat('es-ES',{timeZone:'Europe/Madrid',dateStyle:'short',timeStyle:'short'}).format(new Date(value));}catch{return value;}};
 export function formatSyncDiagnostics(plan){
   const d=plan?.diagnostics;if(!d)return '';
   return [`Jornada: ${plan.scope.from} al ${plan.scope.to}.`,`${d.queried} eventos consultados · ${d.managed} de Voley Calendar · ${d.forReferee} del árbitro · ${d.matched} vinculados al PDF · ${d.proposed} posibles eliminaciones.`,d.queryFrom&&`Consulta por intervalo: ${d.queryFrom} — ${d.queryTo} (incluye margen y búsquedas por metadatos).`,...d.messages].filter(Boolean).join('\n');
 }
-export function setupSyncUI({service,getGames,getContext,setBusy,canUse,document:doc=document}){
+export function setupSyncUI({service,getGames,getContext,setBusy,canUse,onChange=()=>{},document:doc=document}){
   const $=id=>doc.getElementById(id);let plan=null,working=false,signature='',detected=detectRound([]),confirmed=null,hasDocument=false;
-  const currentSignature=()=>JSON.stringify({games:getGames(),scope:scope(),duration:$('duration').value,reminder:$('reminder').value});
+  const currentSignature=()=>JSON.stringify({games:getGames().map(({selected,reviewed,...game})=>game),scope:scope(),duration:$('duration').value,reminder:$('reminder').value});
   const scope=()=>automaticScope(confirmed||detected,{...getContext(),complete:$('syncComplete').checked});
   function intervalInfo(range=confirmed||detected){
     if(!hasDocument){$('syncIntervalInfo').textContent='Sube un PDF para detectar la jornada.';$('syncIntervalWarning').textContent='';$('syncIntervalConfirmation').hidden=true;return;}
@@ -18,7 +18,13 @@ export function setupSyncUI({service,getGames,getContext,setBusy,canUse,document
     $('syncIntervalWarning').textContent=range.warnings.join(' ');
     $('syncIntervalConfirmation').hidden=!hasDocument||!detected.needsConfirmation||!!confirmed;
   }
-  function invalidate(){if(working)return;if(plan){plan=null;$('syncRows').replaceChildren();$('syncSummary').textContent='';$('syncDiagnostics').textContent='';$('syncStatus').textContent='Los datos han cambiado. Pulsa «Comprobar cambios» para obtener otra vista previa.';}refresh();}
+  function invalidate({force=false}={}){
+    if(!working&&plan){
+      let same=false;try{same=!force&&signature===currentSignature();}catch{/* Datos pendientes de revisión. */}
+      if(!same){plan=null;$('syncRows').replaceChildren();$('syncSummary').textContent='';$('syncDiagnostics').textContent='';$('syncStatus').textContent='Los datos han cambiado. La comparación se actualizará cuando los datos sean válidos.';}
+    }
+    refresh();onChange();
+  }
   function refresh(){
     $('checkSync').disabled=working||!canUse();
     $('applySync').disabled=working||!canUse()||!plan||!plan.rows.some(r=>r.selected&&r.action&&r.result?.status!=='success');
@@ -78,10 +84,13 @@ export function setupSyncUI({service,getGames,getContext,setBusy,canUse,document
   async function check(){
     if(working)return;
     try{
-      const games=getGames(),context=scope(),duration=Number($('duration').value),reminder=Number($('reminder').value);
+      const games=structuredClone(getGames()),context=scope(),duration=Number($('duration').value),reminder=Number($('reminder').value);
       if(!Number.isInteger(reminder)||reminder<0||reminder>10080)throw Error('Revisa el recordatorio antes de comprobar los cambios.');
       signature=currentSignature();working=true;setBusy(true);refresh();$('syncStatus').textContent='Consultando Google. Esta comprobación no modifica eventos…';
-      plan=await service.checkChanges(games,context,duration,reminder);
+      const result=await service.checkChanges(games,context,duration,reminder);
+      let same=false;try{same=signature===currentSignature();}catch{/* El documento o las ediciones cambiaron durante la consulta. */}
+      if(!same){plan=null;$('syncStatus').textContent='Los datos cambiaron durante la consulta. Se preparará otra comparación cuando sean válidos.';return;}
+      plan=result;
       intervalInfo(plan.scope);
       $('syncStatus').textContent='Vista previa preparada. Consulta el diagnóstico y revisa las operaciones. No se ha modificado Google.';
     }catch(e){plan=null;$('syncStatus').textContent=e.message;if(e.intervals){detected={...detected,needsConfirmation:true,warnings:[e.message]};confirmed=null;$('syncConfirmFrom').value=e.intervals[0].from;$('syncConfirmTo').value=e.intervals[0].to;intervalInfo();}}
@@ -104,9 +113,9 @@ export function setupSyncUI({service,getGames,getContext,setBusy,canUse,document
   }
   $('checkSync').onclick=check;$('applySync').onclick=()=>apply();$('retrySync').onclick=()=>apply(true);
   $('syncComplete').onchange=invalidate;
-  $('confirmSyncInterval').onclick=()=>{try{confirmed=confirmRound(detected,$('syncConfirmFrom').value,$('syncConfirmTo').value);invalidate();intervalInfo();$('syncStatus').textContent='Intervalo confirmado. Pulsa «Comprobar cambios».';}catch(e){$('syncStatus').textContent=e.message;}};
+  $('confirmSyncInterval').onclick=()=>{try{confirmed=confirmRound(detected,$('syncConfirmFrom').value,$('syncConfirmTo').value);invalidate();intervalInfo();$('syncStatus').textContent='Intervalo confirmado. Se puede preparar la comparación.';}catch(e){$('syncStatus').textContent=e.message;}};
   for(const id of ['syncConfirmFrom','syncConfirmTo'])$(id).oninput=()=>{confirmed=null;invalidate();};
-  return {invalidate,refresh,setDocument(games,headers){hasDocument=true;detected=detectRound(games,headers);confirmed=null;$('syncConfirmFrom').value=detected.from;$('syncConfirmTo').value=detected.to;invalidate();intervalInfo();},suggest(games=[]){
+  return {invalidate,refresh,check,signature:currentSignature,checkedSignature:()=>signature,hasResults:()=>!!plan?.rows.some(row=>row.result),setDocument(games,headers){hasDocument=true;detected=detectRound(games,headers);confirmed=null;$('syncConfirmFrom').value=detected.from;$('syncConfirmTo').value=detected.to;invalidate({force:true});intervalInfo();},suggest(games=[]){
     if(games.length&&!confirmed&&!detected.headers.length){const next=detectRound(games);if(!hasDocument||next.from!==detected.from||next.to!==detected.to||next.needsConfirmation!==detected.needsConfirmation){hasDocument=true;detected=next;$('syncConfirmFrom').value=next.from;$('syncConfirmTo').value=next.to;}}
     intervalInfo();
   }};

@@ -1,22 +1,23 @@
 // Las vistas comparten los mismos controles y estado: navegar no reinicia la aplicación.
 export const routes={
-  '/':{title:'Inicio',heading:'¿Qué quieres hacer hoy?',description:'Elige cómo preparar tu próxima jornada arbitral.'},
-  '/nueva':{title:'Nueva designación',heading:'Nueva designación',description:'Sube el documento, revisa tus partidos y llévalos a tu calendario.'},
-  '/revision':{title:'Revisar cambios',heading:'Revisar cambios',description:'Compara el PDF actualizado con Google Calendar y confirma cada operación.'}
+  '/':{title:'Acceso',heading:'Tu jornada empieza aquí',description:'Conecta Google Calendar para revisar automáticamente tus designaciones.'},
+  '/nueva':{title:'Mis designaciones',heading:'Tus designaciones',description:'Sube el PDF y selecciona tu nombre. Comprobaremos tu calendario antes de preparar cualquier operación.'},
+  '/revision':{title:'Revisión automática',heading:'Revisa tu jornada',description:'Nuevos partidos, modificaciones y posibles retiradas. Solo se aplicarán las operaciones que confirmes.'}
 };
 export function resolveRoute(pathname){return pathname.replace(/\/+$/,'')||'/';}
 
-export function setupRouter({document:doc=globalThis.document,window:win=globalThis.window,hasWork=()=>false,isBusy=()=>false}={}){
+export function setupRouter({document:doc=globalThis.document,window:win=globalThis.window,hasWork=()=>false,isBusy=()=>false,hasAccess=()=>true}={}){
   const views=[...doc.querySelectorAll('[data-pages]')];
   const links=[...doc.querySelectorAll('a[data-route]')];
   let current;
   function render({focus=false}={}){
     current=resolveRoute(win.location.pathname);
-    const route=routes[current];
-    doc.body.dataset.page=route?current:'not-found';
-    for(const view of views)view.hidden=!view.dataset.pages.split(' ').includes(route?current:'not-found');
+    const page=routes[current]&&current!=='/'&&!hasAccess()?'/':current;
+    const route=routes[page];
+    doc.body.dataset.page=route?page:'not-found';
+    for(const view of views)view.hidden=!view.dataset.pages.split(' ').includes(route?page:'not-found');
     for(const link of links){
-      if(resolveRoute(new URL(link.href,win.location.href).pathname)===current)link.setAttribute('aria-current','page');
+      if(resolveRoute(new URL(link.href,win.location.href).pathname)===page)link.setAttribute('aria-current','page');
       else link.removeAttribute('aria-current');
     }
     doc.title=`${route?.title||'Página no encontrada'} · Voley Calendar`;

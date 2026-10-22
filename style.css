@@ -454,3 +454,17 @@ body[data-page="/revision"] .game-top{display:none}
 body:not([data-page="/nueva"]) .shell{padding-bottom:32px}
 @media(max-width:1000px){.shell>header{gap:14px}header nav{order:3;width:100%;margin:0}header nav a{flex:1;text-align:center}}
 @media(max-width:760px){.shell>header{padding:16px;border-radius:0 0 14px 14px;gap:12px}.brand{margin-right:auto}header nav{display:flex;gap:5px}header nav a{font-size:11px;padding:10px 5px}.page-intro{padding:28px 0 20px}.page-intro>p{font-size:13px}.home-grid{grid-template-columns:minmax(0,1fr);gap:16px;margin-bottom:24px}.home-card{padding:24px}.home-card h2{font-size:23px}.home-icon{margin-bottom:20px}.home-card p{font-size:13px}}
+.access-panel{max-width:580px;margin:0 auto 40px;padding:36px}
+.access-panel h2{font-size:28px}.access-panel>p{color:var(--muted);line-height:1.8;font-size:14px}
+.access-panel button{width:100%;font-size:14px;min-height:48px}
+.access-panel .home-icon{margin-bottom:20px}.access-panel .muted{font-size:12px}
+.connection-message{padding:10px 14px;border-left:3px solid #ac2033;background:#fff;border-radius:6px;overflow-wrap:anywhere}
+#accountLabel{overflow-wrap:anywhere}
+.auto-notice{padding:14px 18px;border:1px solid var(--line);border-radius:10px;background:white;margin-bottom:20px;font-size:12px}
+.auto-notice p{margin:0 0 6px}.auto-notice a{font-weight:700}
+#offlineNotice{margin-bottom:22px;font-size:12px;line-height:1.7}
+#export-step{order:-1}
+.action-dock .toolbar>a{display:flex;align-items:center;text-align:center;text-decoration:none}
+body[data-page="/revision"] .shell{padding-bottom:32px}
+#sync-step{scroll-margin-top:20px}
+@media(max-width:760px){.access-panel{padding:24px}.action-dock .toolbar>a{font-size:11px;justify-content:center;padding:10px 12px}}

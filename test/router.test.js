@@ -60,7 +60,7 @@ test('Vercel conserva las rutas directas y la plantilla tiene IDs únicos y un s
   for(const source of ['/nueva','/revision'])assert(config.rewrites.some(r=>r.source===source&&r.destination==='/index.html'));
   const html=fs.readFileSync('index.html','utf8'),ids=[...html.matchAll(/id="([^"]+)"/g)].map(m=>m[1]);assert.equal(ids.length,new Set(ids).size);
   assert.equal((html.match(/src="\/app.js"/g)||[]).length,1);
-  assert.match(html,/<section class="panel" id="sync-step" data-pages="\/revision" hidden>/);
-  assert.match(html,/<section data-pages="\/nueva" hidden class="action-dock"/);
+  assert.match(html,/id="syncRound"/);
+  assert(!html.includes('id="syncRows"'));
   assert.match(html,/href="\/style.css"/);
 });

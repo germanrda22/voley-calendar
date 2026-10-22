@@ -1,6 +1,6 @@
 import {getDocument, GlobalWorkerOptions} from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import {extractPage} from './extract.js';
+import {extractPage, deduplicateGames} from './extract.js';
 import {findHeaderIntervals} from './round.js';
 GlobalWorkerOptions.workerSrc = workerUrl;
 export async function readPDF(file, progress, ocrPage) {
@@ -19,9 +19,14 @@ export async function readPDF(file, progress, ocrPage) {
         canvas.width = viewport.width; canvas.height = viewport.height;
         await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
         games.push(...await ocrPage(canvas, n)); canvas.width = canvas.height = 0;
-      } else games.push(...extractPage(text.items, page.getViewport({scale:1}).width, n));
+      } else {
+        const extracted=extractPage(text.items, page.getViewport({scale:1}).width, n);
+        games.push(...extracted);
+        // A text page with no recognised rows cannot prove a complete extraction.
+        if(!extracted.length)scannedPages.push(n);
+      }
       page.cleanup();
     }
-    return {games, scannedPages, headers};
+    return {games:deduplicateGames(games), scannedPages, headers};
   } finally { await task.destroy(); }
 }

@@ -67,6 +67,7 @@ function candidateFor(event,game,scope){
 }
 const safelyManaged=(event,game,scope)=>managed(event)&&(!privateData(event).voleyRef||sameRef(event,scope.referee))&&(sameRef(event,scope.referee)||matchesSource(event,game?.payload?.id));
 export async function compareChanges(entries,events,scope) {
+  if(entries.some(({game})=>game.ambiguous||game.manual||game.issues?.length))scope={...scope,extractionReliable:false};
   if(scope.documentPartial)scope={...scope,complete:false};
   const rows=[],reserved=new Set(),sourceCounts=new Map(),queried=events.length;
   if(scope.automatic){
@@ -158,6 +159,7 @@ export async function resolveRow(plan,key,choice) {
 export function createSyncService({request,list,buildEvent}) {
   const plans=new WeakSet();
   async function checkChanges(games,scope,duration=120,reminder=0){
+    if(games.some(g=>(g.ambiguous||g.manual||g.issues?.length)&&!g.reviewed))throw Error('Revisa los partidos ambiguos antes de sincronizar.');
     if(!scope.calendar||!normalize(scope.referee)||!normalize(scope.round))throw Error('Selecciona calendario, árbitro e identificador de jornada.');
     if(!/^\d{4}-\d{2}-\d{2}$/.test(scope.from)||!/^\d{4}-\d{2}-\d{2}$/.test(scope.to)||scope.from>scope.to)throw Error('Introduce un intervalo de jornada válido.');
     const base=`calendars/${encodeURIComponent(scope.calendar)}/events`,entries=[];

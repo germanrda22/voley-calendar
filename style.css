@@ -152,6 +152,9 @@ clip-path:inset(50%);
 overflow:hidden}
 .panel:has(.file-input:focus-visible) .drop{outline:3px solid var(--red);
 outline-offset:4px}
+.pdf-picker{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:6px}
+.pdf-picker button{min-height:44px;flex-shrink:0}
+.pdf-picker #files{margin:0;min-width:0;flex:1 1 160px;overflow-wrap:anywhere}
 #files{margin-top:12px;
 overflow-wrap:anywhere}
 .toolbar{gap:9px;

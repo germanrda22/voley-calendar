@@ -2,6 +2,7 @@ import {prepareEvent} from './prepare.js';
 import {normalize,functionsFor} from './model.js';
 import {assignmentId} from './google-identity.js';
 import {createSyncService,metadata,matchesSource,strongMatch} from './sync.js';
+import {createRoundSync} from './round-sync.js';
 
 export const scopes=['https://www.googleapis.com/auth/calendar.events','https://www.googleapis.com/auth/calendar.calendarlist.readonly'];
 export const writableCalendars = calendars => calendars.filter(c=>!c.deleted && ['owner','writer','writerWithoutPrivateAccess'].includes(c.accessRole));
@@ -143,12 +144,15 @@ export function createGoogleService({fetcher=(...args)=>fetch(...args),oauth=()=
     }finally{importing=false;notify();}
   }
   const sync=createSyncService({request,list,buildEvent:googleEvent});
+  const roundSync=createRoundSync({request,list,buildEvent:googleEvent});
   async function exclusive(operation){
     if(importing||connecting)throw Error('Ya hay una operación de Google en curso.');
     if(!isConnected())throw new GoogleError(401,'Conecta Google para comprobar o aplicar cambios.');
     importing=true;notify();try{return await operation();}finally{importing=false;notify();}
   }
   return {connect,disconnect,isConnected,importGames,
+    inspectRound:(...args)=>exclusive(()=>roundSync.inspect(...args)),
+    synchronizeRound:(...args)=>exclusive(()=>roundSync.synchronize(...args)),
     checkChanges:(...args)=>exclusive(()=>sync.checkChanges(...args)),
     applyChanges:(...args)=>exclusive(()=>sync.applyChanges(...args)),resolveChange:sync.resolveRow};
 }

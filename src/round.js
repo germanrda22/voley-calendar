@@ -25,7 +25,8 @@ export function detectRound(games,headers=[]){
   const outside=valid.filter(date=>from&&to&&(date<from||date>to));
   if(outside.length){needsConfirmation=true;warnings.push('Hay partidos fuera del intervalo de la cabecera. Revisa y confirma el intervalo; no se ampliará automáticamente.');}
   const competitionKeys=[...new Set(games.map(g=>{const data=g.original||g;return JSON.stringify([normalize(data.competition),normalize(data.category)]);} ))].sort();
-  return {from,to,source,competitionScope:'VOLEIBOL',competitionKeys,needsConfirmation,warnings,headers:unique,outside:[...new Set(outside)],deletionsAllowed:unique.length<=1&&!outside.length&&!missing};
+  const extractionAmbiguous=games.some(g=>g.ambiguous||g.manual||g.issues?.length);
+  return {from,to,source,competitionScope:'VOLEIBOL',competitionKeys,needsConfirmation,warnings,headers:unique,outside:[...new Set(outside)],deletionsAllowed:!extractionAmbiguous&&unique.length<=1&&!outside.length&&!missing};
 }
 export function confirmRound(detection,from,to){
   if(!validDay(from)||!validDay(to)||from>to)throw Error('Confirma un intervalo de fechas válido.');

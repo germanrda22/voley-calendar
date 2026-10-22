@@ -8,7 +8,7 @@ export function formatSyncDiagnostics(plan){
   const d=plan?.diagnostics;if(!d)return '';
   return [`Jornada: ${plan.scope.from} al ${plan.scope.to}.`,`${d.queried} eventos consultados · ${d.managed} de Voley Calendar · ${d.forReferee} del árbitro · ${d.matched} vinculados al PDF · ${d.proposed} posibles eliminaciones.`,d.queryFrom&&`Consulta por intervalo: ${d.queryFrom} — ${d.queryTo} (incluye margen y búsquedas por metadatos).`,...d.messages].filter(Boolean).join('\n');
 }
-export function setupSyncUI({service,getGames,getContext,setBusy,canUse,onChange=()=>{},document:doc=document}){
+export function setupSyncUI({service,getGames,getContext,setBusy,canUse,onChange=()=>{},onUpdate=()=>{},document:doc=document}){
   const $=id=>doc.getElementById(id);let plan=null,working=false,signature='',detected=detectRound([]),confirmed=null,hasDocument=false;
   const currentSignature=()=>JSON.stringify({games:getGames().map(({selected,reviewed,...game})=>game),scope:scope(),duration:$('duration').value,reminder:$('reminder').value});
   const scope=()=>automaticScope(confirmed||detected,{...getContext(),complete:$('syncComplete').checked});
@@ -31,6 +31,7 @@ export function setupSyncUI({service,getGames,getContext,setBusy,canUse,onChange
     $('retrySync').disabled=working||!canUse()||!plan||!plan.rows.some(r=>r.result?.status==='error');
     $('retrySync').hidden=!plan?.rows.some(r=>r.result?.status==='error');
     for(const id of ['syncConfirmFrom','syncConfirmTo','confirmSyncInterval','syncComplete'])$(id).disabled=working;
+    onUpdate();
   }
   function summary(){
     if(!plan)return;
@@ -115,7 +116,7 @@ export function setupSyncUI({service,getGames,getContext,setBusy,canUse,onChange
   $('syncComplete').onchange=invalidate;
   $('confirmSyncInterval').onclick=()=>{try{confirmed=confirmRound(detected,$('syncConfirmFrom').value,$('syncConfirmTo').value);invalidate();intervalInfo();$('syncStatus').textContent='Intervalo confirmado. Se puede preparar la comparación.';}catch(e){$('syncStatus').textContent=e.message;}};
   for(const id of ['syncConfirmFrom','syncConfirmTo'])$(id).oninput=()=>{confirmed=null;invalidate();};
-  return {invalidate,refresh,check,signature:currentSignature,checkedSignature:()=>signature,hasResults:()=>!!plan?.rows.some(row=>row.result),setDocument(games,headers){hasDocument=true;detected=detectRound(games,headers);confirmed=null;$('syncConfirmFrom').value=detected.from;$('syncConfirmTo').value=detected.to;invalidate({force:true});intervalInfo();},suggest(games=[]){
+  return {invalidate,refresh,check,getPlan:()=>plan,getScope:scope,signature:currentSignature,checkedSignature:()=>signature,hasResults:()=>!!plan?.rows.some(row=>row.result),setDocument(games,headers){hasDocument=true;detected=detectRound(games,headers);confirmed=null;$('syncConfirmFrom').value=detected.from;$('syncConfirmTo').value=detected.to;invalidate({force:true});intervalInfo();},suggest(games=[]){
     if(games.length&&!confirmed&&!detected.headers.length){const next=detectRound(games);if(!hasDocument||next.from!==detected.from||next.to!==detected.to||next.needsConfirmation!==detected.needsConfirmation){hasDocument=true;detected=next;$('syncConfirmFrom').value=next.from;$('syncConfirmTo').value=next.to;}}
     intervalInfo();
   }};

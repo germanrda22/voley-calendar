@@ -94,7 +94,7 @@ test('consulta paginada y búsqueda de identidad fuera del intervalo actual',asy
     }
   }});
   await h.service.connect('id');assert.equal((await h.service.importGames([g],'target/calendar',120,0))[0].status,'pending');
-  assert.equal(identityLookups,1);assert(h.calls.some(c=>c.url.includes('pageToken=second')));assert(!h.calls.some(c=>c.init.method==='POST'));
+  assert.equal(identityLookups,2);assert(h.calls.some(c=>c.url.includes('pageToken=second')));assert(!h.calls.some(c=>c.init.method==='POST'));
 });
 
 test('401 caduca la sesión; 403 identifica error y permite reintentar solo los fallidos',async()=>{

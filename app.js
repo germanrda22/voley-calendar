@@ -6,9 +6,14 @@ import {createGoogleService,preferredCalendar} from './src/google.js';
 import {captureOriginal} from './src/google-identity.js';
 import {orderedGames,eventGame,prepareEvent,duplicateGroups} from './src/prepare.js';
 import {generateICS as createICS,offerICSDownload} from './src/ics.js';
+import {setupSyncUI} from './src/sync-ui.js';
+import {findHeaderIntervals,detectRound,automaticScope} from './src/round.js';
 const $=id=>document.getElementById(id);
 let games=[],files=[],busy=false;
 let appleBusy=false,appleDownload;
+let lastExtractionReliable=false,syncBusy=false;
+let extractionIssues=[];
+let documentHeaders=[];
 const progress=text=>$('status').textContent=text;
 const selectedName=()=>normalize($('referee').value||$('refereeSelect').value);
 const googleClientId=import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim()||'';
@@ -28,6 +33,7 @@ function updateSummary(){
   $('duplicateStatus').textContent=duplicates.length?`Posibles duplicados: ${duplicates.length} grupo(s). Corrige o deselecciona las repeticiones antes de exportar.\n`+duplicates.map(group=>`${group[0].date} ${group[0].time} · ${group[0].home} vs ${group[0].away} (${group.length} partidos)`).join('\n'):'';
   for(const card of $('games').children)if(card.dataset.gameId)card.classList.toggle('possible-duplicate',duplicates.some(group=>group.some(g=>g.id===card.dataset.gameId)));
   syncGoogleUI();
+  syncController.invalidate();syncController.suggest(games);
 }
 function validation(g){
   const errors=[]; const value=roleGame(g);
@@ -78,6 +84,7 @@ for(const [id,value]of [['selectAll',true],['selectNone',false]])$(id).onclick=(
 async function ocr(source,page,worker){
   progress(`OCR: página ${page}…`);
   const {data}=await worker.recognize(source,{}, {blocks:true,text:true});
+  documentHeaders.push(...findHeaderIntervals(data.text));
   const canvas=source instanceof HTMLCanvasElement?source:null;
   let width=canvas?.width,height=canvas?.height;
   if(!canvas){const bitmap=await createImageBitmap(source);width=bitmap.width;height=bitmap.height;bitmap.close();}
@@ -90,6 +97,8 @@ async function ocr(source,page,worker){
 }
 async function scan(useOCR=false){
   if(busy)return;busy=true;$('scan').disabled=true;$('ocr').disabled=true;$('images').disabled=true;
+  lastExtractionReliable=false;extractionIssues=[];$('syncComplete').checked=false;syncController.invalidate();
+  documentHeaders=[];
   batch=null;googleResults.clear();showGoogleResults();syncGoogleUI();
   let worker;const next=[],warnings=[];
   try{
@@ -100,13 +109,19 @@ async function scan(useOCR=false){
       try{
         if(file.type==='application/pdf'||/\.pdf$/i.test(file.name)){
           const result=await readPDF(file,progress,useOCR?(canvas,n)=>ocr(canvas,n,worker):undefined);next.push(...result.games);
+          documentHeaders.push(...result.headers);
           if(result.scannedPages.length){missingText=true;warnings.push(`${file.name}: páginas ${result.scannedPages.join(', ')} sin texto seleccionable. Pulsa «Procesar con OCR».`);}
           if(!result.games.length&&!result.scannedPages.length)warnings.push(`${file.name}: no se encontraron filas de partidos. Revisa el formato de tabla o prueba OCR con una imagen.`);
         }else if(file.type.startsWith('image/'))next.push(...await ocr(file,1,worker));
         else warnings.push(`Formato no admitido: ${file.name}`);
       }catch(e){warnings.push(`${file.name}: ${e.message}`);}
     }
-    games=next.map(captureOriginal);refreshNames();render();$('ocr').hidden=!missingText;
+    lastExtractionReliable=!!next.length&&!warnings.length&&next.every(g=>!g.issues.length);
+    extractionIssues=[...new Set([...warnings,...next.flatMap(g=>g.issues)])].slice(0,5);
+    games=next.map(captureOriginal);
+    const detected=detectRound(games,documentHeaders);
+    if(!detected.needsConfirmation)for(const game of games)game.documentRound=automaticScope(detected,{});
+    syncController.setDocument(games,documentHeaders);refreshNames();render();$('ocr').hidden=!missingText;
     progress([`${games.length} partidos extraídos. Selecciona un árbitro y revisa sus partidos.`,...warnings].join(' '));
   }catch(e){progress('Error de lectura: '+e.message);}
   finally{if(worker)await worker.terminate();busy=false;$('scan').disabled=!files.length;$('ocr').disabled=false;$('images').disabled=false;syncGoogleUI();}
@@ -144,18 +159,20 @@ const resultLabels={checking:'Comprobando duplicados…',creating:'Creando event
 function syncGoogleUI(){
   const connected=googleService.isConnected(),selected=filterGames(games,selectedName()).filter(g=>g.selected);
   const valid=!!selectedName()&&selected.length>0&&selected.every(g=>!validation(g).length)&&!duplicateGroups(selected.map(roleGame),$('duration').value).length;
-  $('connect').disabled=googleBusy||googleConnecting||busy||!googleClientId;
-  $('disconnect').disabled=googleBusy||googleConnecting||!connected;
-  $('calendar').disabled=googleBusy||googleConnecting||!connected;
-  $('google').disabled=googleBusy||googleConnecting||busy||!connected||!$('calendar').value||!valid;
+  $('connect').disabled=syncBusy||googleBusy||googleConnecting||busy||!googleClientId;
+  $('disconnect').disabled=syncBusy||googleBusy||googleConnecting||!connected;
+  $('calendar').disabled=syncBusy||googleBusy||googleConnecting||!connected;
+  $('google').disabled=syncBusy||googleBusy||googleConnecting||busy||!connected||!$('calendar').value||!valid;
   $('retryGoogle').hidden=![...googleResults.values()].some(r=>r.status==='error');
-  $('retryGoogle').disabled=googleBusy||googleConnecting||busy||!connected||!batch||batch.calendar!==$('calendar').value;
-  $('scan').disabled=googleBusy||busy||!files.length;$('images').disabled=googleBusy||busy;$('ocr').disabled=googleBusy||busy;
+  $('retryGoogle').disabled=syncBusy||googleBusy||googleConnecting||busy||!connected||!batch||batch.calendar!==$('calendar').value;
+  $('scan').disabled=syncBusy||googleBusy||busy||!files.length;$('images').disabled=syncBusy||googleBusy||busy;$('ocr').disabled=syncBusy||googleBusy||busy;
   $('googleConnection').textContent=googleConnecting?'Conectando…':connected?'Cuenta conectada':'Sin conexión con Google';
+  syncController?.refresh();
 }
 function calendarDetails(){
   const calendar=calendars.find(c=>c.id===$('calendar').value);
   $('calendarDescription').textContent=calendar?.description||'';
+  syncController.refresh();
 }
 function showGoogleResults(){
   $('googleResults').replaceChildren();
@@ -174,7 +191,7 @@ function showGoogleResults(){
   const finished=[...googleResults.values()].filter(r=>r.status in counts).length;
   $('googleImportSummary').textContent=batch?`${googleBusy?'Progreso':'Resultado'}: ${finished}/${batch.games.length} · ${counts.created} creados · ${counts.existing} existentes · ${counts.pending} pendientes de actualización · ${counts.review} para revisión · ${counts.error} errores. Calendario: ${batch.calendarName}`:'';
 }
-$('calendar').onchange=()=>{localStorage.setItem('voley_google_calendar',$('calendar').value);calendarDetails();syncGoogleUI();};
+$('calendar').onchange=()=>{localStorage.setItem('voley_google_calendar',$('calendar').value);calendarDetails();syncController.invalidate();syncGoogleUI();};
 $('connect').onclick=async()=>{
   if(googleBusy||googleConnecting)return;
   googleConnecting=true;syncGoogleUI();$('googleStatus').textContent='Esperando autorización de Google…';
@@ -212,4 +229,16 @@ async function runGoogle(retry=false){
 }
 $('google').onclick=()=>runGoogle();$('retryGoogle').onclick=()=>runGoogle(true);
 if(!googleClientId)$('googleStatus').textContent='Configura VITE_GOOGLE_CLIENT_ID en .env.local y reinicia Vite para conectar Google.';
+const syncController=setupSyncUI({service:googleService,
+  getGames:()=>{
+    if(!selectedName())throw Error('Selecciona o escribe un árbitro antes de comprobar cambios.');
+    const all=orderedGames(games,selectedName(),$('duration').value);
+    for(const g of all)if(validation(g).length)throw Error('Revisa todos los partidos del árbitro antes de comprobar cambios: '+validation(g).join(' · '));
+    if(duplicateGroups(all.map(roleGame),$('duration').value).length)throw Error('Resuelve los duplicados del documento antes de comparar.');
+    return all.map(g=>roleGame(captureOriginal(g)));
+  },
+  getContext:()=>({calendar:$('calendar').value,referee:refereeName(),extractionReliable:lastExtractionReliable,extractionIssues}),
+  setBusy:value=>{syncBusy=value;syncGoogleUI();},
+  canUse:()=>googleService.isConnected()&&!!$('calendar').value&&!googleBusy&&!googleConnecting&&!busy
+});
 render();

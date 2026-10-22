@@ -1,6 +1,7 @@
 import {prepareEvent} from './prepare.js';
 import {normalize,functionsFor} from './model.js';
 import {assignmentId} from './google-identity.js';
+import {createSyncService,metadata,matchesSource,strongMatch} from './sync.js';
 
 export const scopes=['https://www.googleapis.com/auth/calendar.events','https://www.googleapis.com/auth/calendar.calendarlist.readonly'];
 export const writableCalendars = calendars => calendars.filter(c=>!c.deleted && ['owner','writer','writerWithoutPrivateAccess'].includes(c.accessRole));
@@ -12,7 +13,8 @@ export async function googleEvent(game,duration=120,reminder=0) {
   // The shared preparation function also serves the review preview.
   const prepared=prepareEvent({...game,roleOverrides:{...game.roleOverrides,[normalize(game.referee)]:game.role}},game.referee,duration);
   const id=await assignmentId(game);
-  return {...prepared,id,extendedProperties:{private:{voleyId:id,voleyVersion:'2'}},reminders:{useDefault:false,overrides:reminder>0?[{method:'popup',minutes:reminder}]:[]}};
+  const payload={...prepared,id,reminders:{useDefault:false,overrides:reminder>0?[{method:'popup',minutes:reminder}]:[]}};
+  return {...payload,extendedProperties:{private:await metadata(game,payload)}};
 }
 const madridDay=value=>value?.date || (value?.dateTime ? new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Madrid',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value.dateTime)) : '');
 export function legacyMatch(event,game) {
@@ -29,9 +31,13 @@ function sameContent(a,b) {
   return ['summary','description','location'].every(key=>(a[key]||'')===(b[key]||'')) && date(a.start)===date(b.start) && date(a.end)===date(b.end) && reminders(a.reminders)===reminders(b.reminders);
 }
 export function classifyExisting(events,payload,game) {
-  const matches=events.filter(e=>e.status!=='cancelled' && (e.extendedProperties?.private?.voleyId===payload.id || e.id===payload.id));
+  const matches=events.filter(e=>e.status!=='cancelled' && matchesSource(e,payload.id));
   if(matches.length)return {status:matches.length===1 && sameContent(matches[0],payload)?'existing':'pending',matches};
-  const legacy=events.filter(e=>e.extendedProperties?.private?.voleyVersion!=='2' && legacyMatch(e,game));
+  if(game.documentRound?.automatic){
+    const candidates=events.filter(e=>strongMatch(e,game,game.documentRound));
+    if(candidates.length)return {status:candidates.length>1?'review':sameContent(candidates[0],payload)?'existing':'pending',matches:candidates};
+  }
+  const legacy=events.filter(e=>!['2','3','4'].includes(e.extendedProperties?.private?.voleyVersion) && legacyMatch(e,game));
   return legacy.length?{status:'review',matches:legacy}:null;
 }
 
@@ -46,9 +52,10 @@ export function createGoogleService({fetcher=(...args)=>fetch(...args),oauth=()=
     for(let attempt=0;attempt<3;attempt++) {
       if(!isConnected()) {clear();throw new GoogleError(401,'La sesión ha caducado. Conecta Google de nuevo.');}
       let response;
-      try{response=await fetcher(`https://www.googleapis.com/calendar/v3/${path}`,{...options,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},signal:AbortSignal.timeout(30000)});}
+      try{response=await fetcher(`https://www.googleapis.com/calendar/v3/${path}`,{...options,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',...options.headers},signal:AbortSignal.timeout(30000)});}
       catch(e){if(generation!==epoch)throw new GoogleError(401,'Conexión cerrada.');if(attempt<2){await sleep(500*2**attempt);continue;}throw new GoogleError(0,'Error temporal de red. Puedes reintentar este partido.');}
       if(generation!==epoch)throw new GoogleError(401,'Conexión cerrada.');
+      if(response.status===204)return {};
       let body;
       try{body=await response.json();}catch{
         if(response.ok){if(attempt<2){await sleep(500*2**attempt);continue;}throw new GoogleError(0,'Respuesta incompleta de Google. Reintenta para comprobar el resultado.');}
@@ -59,7 +66,7 @@ export function createGoogleService({fetcher=(...args)=>fetch(...args),oauth=()=
       const reason=body.error?.errors?.[0]?.reason;
       const limited=response.status===429 || response.status===403 && ['rateLimitExceeded','userRateLimitExceeded'].includes(reason);
       if((limited||response.status>=500)&&attempt<2){const retry=Number(response.headers?.get('Retry-After'));await sleep(Math.min(10000,retry>0?retry*1000:500*2**attempt));continue;}
-      const messages={403:limited?'Google ha limitado las solicitudes. Reintenta más tarde.':'Permisos insuficientes o API no habilitada. Revisa Google Cloud y vuelve a conectar.',409:'El identificador del evento ya existe. Es necesario comprobarlo.',429:'Google ha limitado las solicitudes. Reintenta más tarde.'};
+      const messages={403:limited?'Google ha limitado las solicitudes. Reintenta más tarde.':'Permisos insuficientes o API no habilitada. Vuelve a conectar para autorizar el acceso a eventos.',404:'El evento ya no existe o no es accesible. Comprueba de nuevo.',410:'El evento fue eliminado. Comprueba de nuevo.',409:'El identificador del evento ya existe. Es necesario comprobarlo.',412:'El evento cambió en Google (412). Comprueba los cambios de nuevo antes de aplicar.',429:'Google ha limitado las solicitudes. Reintenta más tarde.'};
       throw new GoogleError(response.status,messages[response.status]||`Google Calendar: HTTP ${response.status}. Puedes reintentar.`);
     }
   }
@@ -112,7 +119,9 @@ export function createGoogleService({fetcher=(...args)=>fetch(...args),oauth=()=
         try {
           // Identity lookup has no date restriction: detects manually moved events too.
           const exact=await list(base,{privateExtendedProperty:`voleyId=${payload.id}`,maxResults:'2500'});
-          const combined=[...existing,...exact].filter((e,i,all)=>all.findIndex(x=>x.id===e.id)===i);
+          const source=await list(base,{privateExtendedProperty:`voleyLatestSource=${payload.id}`,maxResults:'2500'});
+          const round=game.documentRound?.round?await list(base,{privateExtendedProperty:`voleyRound=${normalize(game.documentRound.round)}`,maxResults:'2500'}):[];
+          const combined=[...existing,...exact,...source,...round].filter((e,i,all)=>all.findIndex(x=>x.id===e.id)===i);
           let match=classifyExisting(combined,payload,game);
           if(match){emit(game,match.status,'',match.matches);continue;}
           emit(game,'creating');
@@ -133,5 +142,13 @@ export function createGoogleService({fetcher=(...args)=>fetch(...args),oauth=()=
       return results;
     }finally{importing=false;notify();}
   }
-  return {connect,disconnect,isConnected,importGames};
+  const sync=createSyncService({request,list,buildEvent:googleEvent});
+  async function exclusive(operation){
+    if(importing||connecting)throw Error('Ya hay una operación de Google en curso.');
+    if(!isConnected())throw new GoogleError(401,'Conecta Google para comprobar o aplicar cambios.');
+    importing=true;notify();try{return await operation();}finally{importing=false;notify();}
+  }
+  return {connect,disconnect,isConnected,importGames,
+    checkChanges:(...args)=>exclusive(()=>sync.checkChanges(...args)),
+    applyChanges:(...args)=>exclusive(()=>sync.applyChanges(...args)),resolveChange:sync.resolveRow};
 }

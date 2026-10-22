@@ -4,3 +4,5 @@
 .event-preview,#duplicateStatus{white-space:pre-wrap;overflow-wrap:anywhere}.event-preview{font-size:13px;line-height:1.6}.possible-duplicate{border-color:#c88629;background:#fffcf6}#exportSummary{display:inline-block;max-width:100%}
 #googleResults{padding-left:22px;overflow-wrap:anywhere;font-size:13px}#googleResults li{margin:12px 0}#googleStatus,#googleImportSummary,#calendarDescription{white-space:pre-wrap;overflow-wrap:anywhere}
 .download-link{display:inline-block;padding:12px 17px;border-radius:9px;font-size:14px;overflow-wrap:anywhere}
+.inline-check{display:inline-block;width:auto;margin-right:6px}.sync-comparison{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px}.sync-comparison>div{min-width:0;padding:10px;border-radius:8px;background:#f7f9fd}.sync-comparison p{white-space:pre-wrap;overflow-wrap:anywhere}.sync-comparison .sync-difference{background:#fff2db;border:1px solid #edc486}#syncStatus,#syncSummary{white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:620px){.sync-comparison{grid-template-columns:1fr}}
+.sync-diagnostics{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}

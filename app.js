@@ -1,79 +1,105 @@
-const $=id=>document.getElementById(id);let games=[],files=[];const timezone='Europe/Madrid';
-$('clientId').value=localStorage.getItem('voley_google_client')||'';$('clientId').addEventListener('change',e=>localStorage.setItem('voley_google_client',e.target.value.trim()));
-$('images').addEventListener('change',e=>{files=[...e.target.files];$('files').textContent=files.map(f=>f.name).join(' · ');$('scan').disabled=!files.length;$('status').textContent=`${files.length} imagen(es) preparada(s)`});
-function normalize(s){return(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim()}
-function blank(){return{id:crypto.randomUUID(),date:'',time:'',home:'',away:'',category:'',venue:'',role:'',notes:'',selected:true,warning:'Revisa y completa los datos'}}
-let scannedTexts=[];
-function candidateNames(text){
- const names=new Map();
- for(const raw of text.split(/\n/)){
-  // En estas tablas los nombres aparecen a la derecha de fecha y hora.
-  const time=/\b(?:[01]?\d|2[0-3]):[0-5]\d\b/.exec(raw);
-  if(!time)continue;
-  const tail=raw.slice(time.index+time[0].length).trim();
-  const chunks=tail.split(/\s{2,}|\t+|\s*[|;]\s*/).map(x=>x.trim()).filter(Boolean);
-  for(const chunk of chunks){
-   const n=normalize(chunk.replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s'-]/g,' '));
-   const words=n.split(' ').filter(Boolean);
-   if(words.length<2||words.length>4||n.length>38||words.some(w=>w.length<2))continue;
-   if(/\b(PABELLON|MUNICIPAL|VOLEIBOL|GRANADA|ANDALUZA|FEMENINA|MASCULINA|CLUB|CADETE|JUNIOR|INFANTIL|JUVENIL)\b/.test(n))continue;
-   names.set(n,(names.get(n)||0)+1);
-  }
- }
- return names;
-}
+import {blank, normalize, referees, functionsFor, filterGames, refereeKeys} from './src/model.js';
+import {readPDF} from './src/pdf.js';
+import {extractPage} from './src/extract.js';
+import {getDates,createICS,title} from './src/calendar.js';
+import {connect,exportGoogle} from './src/google.js';
+const $=id=>document.getElementById(id);
+let games=[],files=[],busy=false;
+const progress=text=>$('status').textContent=text;
+const selectedName=()=>normalize($('referee').value||$('refereeSelect').value);
+$('clientId').value=localStorage.getItem('voley_google_client')||'';
+$('clientId').onchange=e=>localStorage.setItem('voley_google_client',e.target.value.trim());
+$('images').onchange=e=>{files=[...e.target.files];$('files').textContent=files.map(f=>f.name).join(' · ');$('scan').disabled=!files.length;progress(`${files.length} documento(s) preparado(s)`);};
 function refreshNames(){
- const all=new Map();for(const t of scannedTexts)for(const [n,c] of candidateNames(t))all.set(n,(all.get(n)||0)+c);
- const sel=$('refereeSelect'),previous=sel.value;sel.replaceChildren();
- const initial=document.createElement('option');initial.value='';initial.textContent='Selecciona un árbitro';sel.append(initial);
- for(const n of [...all.keys()].sort((a,b)=>a.localeCompare(b,'es'))){const o=document.createElement('option');o.value=n;o.textContent=n;sel.append(o)}
- if(all.has(previous))sel.value=previous;
- $('namesStatus').textContent=`${all.size} nombre(s) candidato(s) detectado(s). Revisa la lista: el OCR puede producir errores o nombres incompletos.`;
+  const previous=$('refereeSelect').value, names=referees(games);
+  $('refereeSelect').replaceChildren(new Option('Selecciona un árbitro',''),...names.map(([key,name])=>new Option(name,key)));
+  $('refereeSelect').value=names.some(([key])=>key===previous)?previous:'';
+  $('namesStatus').textContent=`${games.length} partidos detectados · ${names.length} árbitros únicos`;
 }
-function parseText(text,name){
- const lines=text.split(/\n/).map(x=>x.trim()).filter(Boolean),found=[];
- if(!name)return found;
- for(const line of lines){
-  if(!normalize(line).includes(name))continue;
-  const date=(line.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/)||[])[0];
-  const time=(line.match(/\b([01]?\d|2[0-3]):[0-5]\d\b/)||[])[0];
-  const game=blank();if(date){const a=date.split(/[-/.]/);game.date=`${a[2].length===2?'20'+a[2]:a[2]}-${a[1].padStart(2,'0')}-${a[0].padStart(2,'0')}`}
-  game.time=time||'';game.notes=`Texto OCR original: ${line}`;
-  game.warning='Revisa los equipos, el pabellón y la función: el OCR todavía no reconstruye las columnas de la tabla';found.push(game);
- }
- return found;
+function roleGame(g){return {...g,role:g.roleOverrides?.[selectedName()]||functionsFor(g,selectedName()).join(' / '),referee:$('referee').value||$('refereeSelect').selectedOptions[0]?.textContent||''};}
+function validation(g){
+  const errors=[]; const value=roleGame(g);
+  for(const [key,label] of [['date','fecha'],['time','hora'],['home','equipo local'],['away','equipo visitante'],['role','función arbitral']]) if(!value[key]?.trim())errors.push(`Falta ${label}`);
+  try{getDates(g,$('duration').value);}catch(e){errors.push(e.message);}
+  if(g.issues.length&&!g.reviewed)errors.push(...g.issues);
+  return errors;
 }
-function applyFilter(){
- const name=normalize($('referee').value||$('refereeSelect').value);
- games=scannedTexts.flatMap(t=>parseText(t,name));render();
- $('namesStatus').textContent=name?`Filtro: ${name}. ${games.length} fila(s) coincidente(s). Revisa cada partido antes de exportar.`:'Selecciona o escribe un nombre para filtrar los partidos.';
-}
-$('refereeSelect').addEventListener('change',()=>{$('referee').value='';applyFilter()});
-$('referee').addEventListener('input',applyFilter);
-$('scan').addEventListener('click',async()=>{
- if(!window.Tesseract){$('status').textContent='No se pudo cargar el motor OCR. Comprueba tu conexión.';return}
- const button=$('scan');button.disabled=true;scannedTexts=[];
- let worker;
- try{
-  worker=await Tesseract.createWorker('spa+eng');
-  for(let i=0;i<files.length;i++){
-   $('status').textContent=`Analizando imagen ${i+1} de ${files.length}…`;
-   const result=await worker.recognize(files[i]);scannedTexts.push(result.data.text);
+function render(){
+  const visible=filterGames(games,selectedName());
+  $('count').textContent=`${visible.length} partido(s)${selectedName()?' del árbitro':''}`;
+  const container=$('games'); container.replaceChildren();
+  if(!visible.length){const p=document.createElement('p');p.className='muted';p.textContent='No hay partidos para mostrar. Sube documentos o añade uno manualmente.';container.append(p);}
+  for(const g of visible){
+    const card=document.createElement('article');card.className='game';
+    const top=document.createElement('div');top.className='game-top';const label=document.createElement('label'),cb=document.createElement('input');cb.type='checkbox';cb.style.width='auto';cb.style.display='inline';cb.checked=g.selected;cb.onchange=()=>g.selected=cb.checked;label.append(cb,document.createTextNode(' Exportar partido'));
+    const remove=document.createElement('button');remove.className='remove';remove.textContent='Eliminar';remove.onclick=()=>{games=games.filter(x=>x!==g);refreshNames();render();};top.append(label,remove);card.append(top);
+    const grid=document.createElement('div');grid.className='game-grid';
+    const state=document.createElement('p'),end=document.createElement('p');end.className='muted';
+    const update=()=>{const errors=validation(g);state.className=errors.length?'warning':'ok';state.textContent=errors.length?'Revisión necesaria: '+[...new Set(errors)].join(' · '):'Validado';try{end.textContent='Finalización: '+new Intl.DateTimeFormat('es-ES',{timeZone:'Europe/Madrid',dateStyle:'short',timeStyle:'short'}).format(getDates(g,$('duration').value).end);}catch{end.textContent='Finalización pendiente de fecha y hora válidas';}};
+    const fields=[['date','Fecha','date'],['time','Hora de inicio','time'],['category','Categoría','text'],['competition','Competición / grupo','text'],['home','Equipo local','text'],['away','Equipo visitante','text'],['venue','Pabellón','text'],['first','Primer árbitro','text'],['second','Segundo árbitro','text'],['scorer','Anotador','text'],['roleOverride','Función del árbitro seleccionado','select'],['duration','Duración propia (min, opcional)','number'],['dstChoice','Hora repetida en octubre','dst'],['notes','Texto original / observaciones','text']];
+    for(const [key,text,type] of fields){
+      const field=document.createElement('label');field.textContent=text;let input;
+      if(type==='select'||type==='dst'){input=document.createElement('select');const options=type==='dst'?[['','Elegir si la hora es ambigua'],['first','Primera ocurrencia (verano)'],['second','Segunda ocurrencia (invierno)']]:[['',functionsFor(g,selectedName()).join(' / ')||'Sin identificar'],...['Primer árbitro','Segundo árbitro','Anotador','Otro'].map(v=>[v,v])];for(const [value,text]of options)input.add(new Option(text,value));}
+      else{input=document.createElement('input');input.type=type;if(type==='number'){input.min='1';input.max='1440';}}
+      input.value=key==='roleOverride'?(g.roleOverrides?.[selectedName()]||''):(g[key]||'');
+      input.oninput=()=>{if(key==='roleOverride'){g.roleOverrides||={};g.roleOverrides[selectedName()]=input.value;}else g[key]=input.value;g.reviewed=false;reviewCheck.checked=false;update();};
+      if(refereeKeys.includes(key))input.onchange=()=>{refreshNames();render();};
+      field.append(input);grid.append(field);
+    }
+    const review=document.createElement('label'),reviewCheck=document.createElement('input');reviewCheck.type='checkbox';reviewCheck.style.width='auto';reviewCheck.checked=g.reviewed;reviewCheck.onchange=()=>{g.reviewed=reviewCheck.checked;update();};review.append(reviewCheck,document.createTextNode(' He revisado las advertencias y contrastado las funciones con el documento'));
+    card.append(grid,end,state,review);update();container.append(card);
   }
-  refreshNames();applyFilter();
-  $('status').textContent=`${files.length} captura(s) analizada(s). Selecciona un árbitro para ver sus partidos.`;
- }catch(e){$('status').textContent='Error de reconocimiento: '+e.message}
- finally{if(worker)await worker.terminate();button.disabled=false}
-});
-$('add').addEventListener('click',()=>{games.push(blank());render()});
-function render(){const container=$('games');container.replaceChildren();$('count').textContent=`${games.length} partido(s)`;if(!games.length){container.innerHTML='<p class="muted">Todavía no hay partidos. Sube imágenes o añade uno manualmente.</p>';return}games.forEach((g,index)=>{const card=document.createElement('article');card.className='game';const top=document.createElement('div');top.className='game-top';const check=document.createElement('label');const cb=document.createElement('input');cb.type='checkbox';cb.checked=g.selected;cb.style.width='auto';cb.style.display='inline-block';cb.onchange=e=>g.selected=e.target.checked;check.append(cb,document.createTextNode(` Exportar partido ${index+1}`));const del=document.createElement('button');del.className='remove';del.textContent='Eliminar';del.onclick=()=>{games=games.filter(x=>x.id!==g.id);render()};top.append(check,del);card.append(top);const grid=document.createElement('div');grid.className='game-grid';for(const [key,label,type] of [['date','Fecha','date'],['time','Hora','time'],['home','Equipo local','text'],['away','Equipo visitante','text'],['category','Categoría','text'],['venue','Pabellón','text'],['role','Función arbitral','select'],['notes','Observaciones','text']]){const field=document.createElement('label');field.textContent=label;let input;if(type==='select'){input=document.createElement('select');for(const value of ['','Primer árbitro','Segundo árbitro','Anotador','Otro']){const opt=document.createElement('option');opt.value=value;opt.textContent=value||'Seleccionar función';input.append(opt)}}else{input=document.createElement('input');input.type=type}input.value=g[key];input.oninput=e=>g[key]=e.target.value;field.append(input);grid.append(field)}card.append(grid);if(g.warning){const p=document.createElement('p');p.className='warning';p.textContent='⚠ '+g.warning;card.append(p)}container.append(card)})}
-function selectedGames(){const selected=games.filter(g=>g.selected);if(!selected.length)throw Error('Selecciona al menos un partido');for(const g of selected){if(!/^\d{4}-\d{2}-\d{2}$/.test(g.date)||!/^\d{2}:\d{2}$/.test(g.time)||!g.home||!g.away||!g.role)throw Error('Completa fecha, hora, ambos equipos y función en todos los partidos seleccionados')}return selected}
-function esc(s){return String(s||'').replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;')}
-function localStamp(g){return g.date.replaceAll('-','')+'T'+g.time.replace(':','')+'00'}
-function utcStamp(date){return date.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}/,'')}
-function getDates(g){const [y,m,d]=g.date.split('-').map(Number),[h,minute]=g.time.split(':').map(Number);const local=new Date(Date.UTC(y,m-1,d,h,minute));const fmt=new Intl.DateTimeFormat('en-GB',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});const parts=Object.fromEntries(fmt.formatToParts(local).map(p=>[p.type,p.value]));const observed=Date.UTC(+parts.year,+parts.month-1,+parts.day,+parts.hour,+parts.minute);let start=new Date(local.getTime()+(local.getTime()-observed));const p2=Object.fromEntries(fmt.formatToParts(start).map(p=>[p.type,p.value]));const check=Date.UTC(+p2.year,+p2.month-1,+p2.day,+p2.hour,+p2.minute);if(check!==local.getTime())start=new Date(start.getTime()+(local.getTime()-check));const mins=Number($('duration').value)||120;return {start,end:new Date(start.getTime()+mins*60000)}}
-function title(g){return `🏐 ${g.home} vs ${g.away} (${g.role})`}
-function description(g){return [`Categoría: ${g.category}`,`Función: ${g.role}`,`Árbitro: ${$('referee').value}`,g.notes].filter(Boolean).join('\n')}
-$('ics').onclick=()=>{try{const items=selectedGames(),reminder=Math.max(0,Number($('reminder').value)||0);const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Voley Calendar//ES','CALSCALE:GREGORIAN','METHOD:PUBLISH'];for(const g of items){const {start,end}=getDates(g);lines.push('BEGIN:VEVENT',`UID:${g.id}@voley-calendar.local`,`DTSTAMP:${utcStamp(new Date())}`,`DTSTART:${utcStamp(start)}`,`DTEND:${utcStamp(end)}`,`SUMMARY:${esc(title(g))}`,`DESCRIPTION:${esc(description(g))}`,`LOCATION:${esc(g.venue)}`);if(reminder>0)lines.push('BEGIN:VALARM','ACTION:DISPLAY',`DESCRIPTION:${esc(title(g))}`,`TRIGGER:-PT${reminder}M`,'END:VALARM');lines.push('END:VEVENT')}lines.push('END:VCALENDAR');const blob=new Blob([lines.join('\r\n')+'\r\n'],{type:'text/calendar;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='voley-calendar.ics';a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);$('exportStatus').textContent=`Archivo ICS generado con ${items.length} partido(s).` }catch(e){$('exportStatus').textContent=e.message}};
-$('google').onclick=async()=>{try{const items=selectedGames();const clientId=$('clientId').value.trim();if(!clientId)throw Error('Configura primero el OAuth Client ID de Google');if(!window.google?.accounts?.oauth2)throw Error('No se ha cargado Google Identity Services');$('exportStatus').textContent='Esperando autorización de Google…';const tokenClient=google.accounts.oauth2.initTokenClient({client_id:clientId,scope:'https://www.googleapis.com/auth/calendar.events',callback:async response=>{if(response.error){$('exportStatus').textContent='Error OAuth: '+response.error;return}let created=0;try{const existingResponse=await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=250&singleEvents=true&timeMin='+encodeURIComponent(new Date(Math.min(...items.map(g=>getDates(g).start.getTime()))-86400000).toISOString()),{headers:{Authorization:'Bearer '+response.access_token}});if(!existingResponse.ok)throw Error('No se pudieron consultar los eventos existentes');const existing=(await existingResponse.json()).items||[];for(const g of items){const {start,end}=getDates(g),summary=title(g);if(existing.some(e=>e.summary===summary&&e.start?.dateTime&&Math.abs(new Date(e.start.dateTime)-start)<60000))continue;const reminder=Math.max(0,Number($('reminder').value)||0);const event={summary,location:g.venue,description:description(g),start:{dateTime:start.toISOString(),timeZone:timezone},end:{dateTime:end.toISOString(),timeZone:timezone},reminders:{useDefault:false,overrides:reminder?[{method:'popup',minutes:reminder}]:[]}};const res=await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events',{method:'POST',headers:{Authorization:'Bearer '+response.access_token,'Content-Type':'application/json'},body:JSON.stringify(event)});if(!res.ok)throw Error('Google rechazó un evento: HTTP '+res.status);created++}$('exportStatus').textContent=`Google Calendar: ${created} evento(s) creados. Los duplicados detectados se omitieron.`}catch(e){$('exportStatus').textContent=e.message}}});tokenClient.requestAccessToken({prompt:'consent'})}catch(e){$('exportStatus').textContent=e.message}};
+}
+$('refereeSelect').onchange=()=>{$('referee').value='';render();};
+$('referee').oninput=render;
+$('duration').oninput=render;
+$('add').onclick=()=>{const g=blank();g.manual=true;games.push(g);refreshNames();render();};
+for(const [id,value]of [['selectAll',true],['selectNone',false]])$(id).onclick=()=>{for(const g of filterGames(games,selectedName()))g.selected=value;render();};
+async function ocr(source,page,worker){
+  progress(`OCR: página ${page}…`);
+  const {data}=await worker.recognize(source,{}, {blocks:true,text:true});
+  const canvas=source instanceof HTMLCanvasElement?source:null;
+  let width=canvas?.width,height=canvas?.height;
+  if(!canvas){const bitmap=await createImageBitmap(source);width=bitmap.width;height=bitmap.height;bitmap.close();}
+  const words=(data.blocks||[]).flatMap(b=>b.paragraphs||[]).flatMap(p=>p.lines||[]).flatMap(l=>l.words||[]);
+  const items=words.map(w=>({str:w.text,transform:[1,0,0,w.bbox.y1-w.bbox.y0,w.bbox.x0,height-w.bbox.y1],width:w.bbox.x1-w.bbox.x0}));
+  const found=extractPage(items,width,page);
+  for(const g of found)g.issues.push('OCR: verifica todas las columnas y nombres con el original');
+  if(!found.length){const g=blank();g.manual=true;g.notes=data.text;g.issues.push('OCR sin tabla reconocida: completa los datos y los nombres manualmente');found.push(g);}
+  return found;
+}
+async function scan(useOCR=false){
+  if(busy)return;busy=true;$('scan').disabled=true;$('ocr').disabled=true;$('images').disabled=true;
+  let worker;const next=[],warnings=[];
+  try{
+    const needsOCR=useOCR||files.some(f=>f.type.startsWith('image/'));
+    if(needsOCR){if(!window.Tesseract)throw Error('No se pudo cargar Tesseract. Comprueba la conexión para usar OCR.');worker=await window.Tesseract.createWorker('spa+eng',1,{logger:m=>{if(m.status==='recognizing text')progress(`Reconociendo texto: ${Math.round(m.progress*100)} %`);}});}
+    let missingText=false;
+    for(const file of files){
+      try{
+        if(file.type==='application/pdf'||/\.pdf$/i.test(file.name)){
+          const result=await readPDF(file,progress,useOCR?(canvas,n)=>ocr(canvas,n,worker):undefined);next.push(...result.games);
+          if(result.scannedPages.length){missingText=true;warnings.push(`${file.name}: páginas ${result.scannedPages.join(', ')} sin texto seleccionable. Pulsa «Procesar con OCR».`);}
+          if(!result.games.length&&!result.scannedPages.length)warnings.push(`${file.name}: no se encontraron filas de partidos. Revisa el formato de tabla o prueba OCR con una imagen.`);
+        }else if(file.type.startsWith('image/'))next.push(...await ocr(file,1,worker));
+        else warnings.push(`Formato no admitido: ${file.name}`);
+      }catch(e){warnings.push(`${file.name}: ${e.message}`);}
+    }
+    games=next;refreshNames();render();$('ocr').hidden=!missingText;
+    progress([`${games.length} partidos extraídos. Selecciona un árbitro y revisa sus partidos.`,...warnings].join(' '));
+  }catch(e){progress('Error de lectura: '+e.message);}
+  finally{if(worker)await worker.terminate();busy=false;$('scan').disabled=!files.length;$('ocr').disabled=false;$('images').disabled=false;}
+}
+$('scan').onclick=()=>scan();$('ocr').onclick=()=>scan(true);
+function selectedGames(){
+  if(!selectedName())throw Error('Selecciona o escribe el nombre del árbitro antes de exportar');
+  const selected=filterGames(games,selectedName()).filter(g=>g.selected);
+  if(!selected.length)throw Error('Selecciona al menos un partido');
+  for(const g of selected)if(validation(g).length)throw Error('Completa y revisa todos los partidos seleccionados: '+validation(g).join(' · '));
+  return selected.map(roleGame);
+}
+const reminder=()=>{const n=Number($('reminder').value);if(!Number.isInteger(n)||n<0||n>10080)throw Error('Recordatorio válido: de 0 a 10080 minutos');return n;};
+$('ics').onclick=async()=>{try{const items=selectedGames(),ics=await createICS(items,$('duration').value,reminder()),url=URL.createObjectURL(new Blob([ics],{type:'text/calendar;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='voley-calendar.ics';a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);$('exportStatus').textContent=`Archivo ICS generado: ${items.length} partidos.`;}catch(e){$('exportStatus').textContent=e.message;}};
+$('connect').onclick=async()=>{try{$('connect').disabled=true;$('exportStatus').textContent='Esperando autorización de Google…';const calendars=await connect($('clientId').value.trim());$('calendar').replaceChildren(...calendars.map(c=>new Option(c.summary,c.id)));$('exportStatus').textContent=`Sesión iniciada. ${calendars.length} calendarios disponibles.`;}catch(e){$('exportStatus').textContent=e.message;}finally{$('connect').disabled=false;}};
+$('google').onclick=async()=>{try{$('google').disabled=true;const items=selectedGames(),messages=[];$('exportStatus').textContent='Comprobando duplicados…';await exportGoogle(items,$('calendar').value,$('duration').value,reminder(),(g,result)=>{messages.push(`${title(g)}: ${result}`);$('exportStatus').textContent=messages.join('\n');});}catch(e){$('exportStatus').textContent=e.message;}finally{$('google').disabled=false;}};
 render();

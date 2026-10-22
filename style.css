@@ -3,3 +3,4 @@
 #status,#exportStatus{white-space:pre-wrap;overflow-wrap:anywhere}input,select{min-width:0}.game-grid>label{min-width:0}[hidden]{display:none!important}
 .event-preview,#duplicateStatus{white-space:pre-wrap;overflow-wrap:anywhere}.event-preview{font-size:13px;line-height:1.6}.possible-duplicate{border-color:#c88629;background:#fffcf6}#exportSummary{display:inline-block;max-width:100%}
 #googleResults{padding-left:22px;overflow-wrap:anywhere;font-size:13px}#googleResults li{margin:12px 0}#googleStatus,#googleImportSummary,#calendarDescription{white-space:pre-wrap;overflow-wrap:anywhere}
+.download-link{display:inline-block;padding:12px 17px;border-radius:9px;font-size:14px;overflow-wrap:anywhere}

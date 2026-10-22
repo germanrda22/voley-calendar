@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import {getDocument} from 'pdfjs-dist/legacy/build/pdf.mjs';
 import {extractPage} from '../src/extract.js';
 import {normalize,referees,filterGames,functionsFor,parseDate} from '../src/model.js';
-import {getDates,createICS,stableId} from '../src/calendar.js';
+import {getDates,stableId} from '../src/calendar.js';
+import {generateICS as createICS} from '../src/ics.js';
 test('PDF real: todas las filas, nombres y columnas sin desplazar huecos',async()=>{
   const file=fs.readdirSync('fixtures').find(f=>f.endsWith('.pdf'));
   const doc=await getDocument({data:new Uint8Array(fs.readFileSync('fixtures/'+file))}).promise;

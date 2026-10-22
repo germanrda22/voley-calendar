@@ -40,7 +40,8 @@ Antes de exportar se muestra el total seleccionado y se buscan posibles duplicad
 - `src/extract.js`: reconstrucción por coordenadas y fechas que anclan las filas; no se dividen nombres por espacios. Las columnas están calibradas para el documento de la Delegación Granadina incluido en `fixtures/`. Se conservan huecos entre primer árbitro, segundo árbitro y anotador. Un formato desconocido exige completar los campos y verificar las funciones. Cambios de plantilla requieren ajustar `granadaLayout` y añadir ejemplos a las pruebas.
 - `src/model.js`: normalización, nombres únicos, filtrado y funciones arbitrales.
 - `src/prepare.js`: orden cronológico, preparación de eventos para revisión y detección de duplicados dentro de la selección, separado de la extracción PDF.
-- `src/calendar.js`: fechas de Madrid, duración, identificadores SHA-256 estables y archivo ICS con escape y plegado UTF-8. Los instantes se exportan en UTC después de convertir desde Europe/Madrid, evitando depender de la zona del dispositivo. Las horas inexistentes en marzo se rechazan; las horas repetidas en octubre requieren elegir una ocurrencia.
+- `src/calendar.js`: fechas de Madrid, duración y utilidades de calendario. Las horas inexistentes en marzo se rechazan; las horas repetidas en octubre requieren elegir una ocurrencia.
+- `src/ics.js`: exportación a Apple Calendar con la preparación común de eventos, formato iCalendar y descarga mediante un enlace persistente. No requiere dependencias adicionales.
 - `src/google.js`: OAuth, calendarios editables, consulta paginada de duplicados, IDs deterministas y resultados por evento. Los tokens permanecen en memoria.
 - `src/google-identity.js`: copia de datos originales después de la extracción e identidad de designación independiente de las ediciones posteriores. No modifica el parser.
 
@@ -87,12 +88,28 @@ El ID se utiliza como ID determinista de evento y como `extendedProperties.priva
 
 La importación informa de creados, existentes, pendientes de actualización, coincidencias dudosas y errores. Solo se muestra «creado» tras la confirmación de Google. El servicio evita importaciones simultáneas, utiliza reintentos limitados con espera para errores temporales y resuelve conflictos 409 leyendo el evento antes de clasificarlo. Un error 401 obliga a conectar de nuevo; los errores de permisos 403 se muestran sin repetirlos indiscriminadamente. Las solicitudes de renovación de sesión son explícitas, desde el botón de conexión.
 
-El token permanece únicamente en memoria, caduca y se elimina al desconectar. Se solicita la revocación a Google al desconectar. Recargar requiere volver a conectar, pero conserva la preferencia de calendario por su ID. La exportación ICS anterior se conserva sin ampliarla; sus reglas de UID siguen siendo independientes de las de Google.
+El token permanece únicamente en memoria, caduca y se elimina al desconectar. Se solicita la revocación a Google al desconectar. Recargar requiere volver a conectar, pero conserva la preferencia de calendario por su ID.
 
 Referencias: [modelo de tokens](https://developers.google.com/identity/oauth2/web/guides/use-token-model), [lista de calendarios](https://developers.google.com/workspace/calendar/api/v3/reference/calendarList/list), [creación de eventos](https://developers.google.com/workspace/calendar/api/v3/reference/events/insert) y [errores de Calendar API](https://developers.google.com/workspace/calendar/api/guides/errors).
+
+## Apple Calendar mediante archivo ICS
+
+Selecciona el árbitro y los partidos, revisa los datos y pulsa **Exportar a Apple Calendar**, junto al botón de Google. No requiere conexión con Google, Apple ID ni acceso a iCloud. Si no hay partidos seleccionados se muestra un aviso. Los campos incompletos, horas inválidas y duplicados seleccionados deben revisarse antes de exportar.
+
+Se genera un único `voley-calendar.ics` con los partidos seleccionados. Todos los datos visibles se obtienen de la preparación común de eventos y reflejan las últimas ediciones: título, categoría, competición, función, demás árbitros, pabellón, inicio y finalización. La duración es de 120 minutos por defecto y respeta la duración general y la propia de cada partido. Los recordatorios configurados se conservan.
+
+El archivo utiliza UTF-8, líneas CRLF, escape de barras, comas, punto y coma y saltos de línea, y plegado de líneas a un máximo de 75 octetos sin cortar caracteres Unicode. Los instantes se convierten desde Europe/Madrid a UTC, incluyendo los cambios estacionales; no son horas flotantes que dependan de la zona del dispositivo. Los UID reutilizan la identidad original de designación ya existente en la aplicación, con el sufijo `@voley-calendar.local`, y no dependen del UUID aleatorio de la tarjeta ni cambian al corregir los datos revisados del partido. Solo la identidad se obtiene de la copia original; el contenido del evento utiliza los datos editados.
+
+En ordenador se descarga el archivo. Si no comienza la descarga automática, pulsa el enlace **Descargar archivo .ics**, que permanece disponible hasta sustituirlo por otra exportación o cerrar la página. En Safari de iPhone/iPad se usa el mismo archivo y enlace; puedes guardarlo en Archivos o abrirlo según las opciones de la versión de iOS/iPadOS. La aplicación prepara el archivo, pero no añade eventos automáticamente al calendario.
+
+Para comprobarlo en Mac, abre Calendario y utiliza **Archivo > Importar**, selecciona el `.ics` y el calendario de destino. Prueba también la descarga en Safari en un iPhone/iPad real y comprueba el flujo de apertura/importación disponible en ese dispositivo. La importación de archivos no es sincronización: un UID estable ayuda a identificar un evento, pero el comportamiento al reimportar o actualizar depende del cliente de calendario y no garantiza evitar todas las copias.
+
+Referencias: [RFC 5545](https://www.rfc-editor.org/rfc/rfc5545) e [importación de calendarios en Mac](https://support.apple.com/guide/calendar/import-or-export-calendars-icl1023/mac).
 
 ## Validación
 
 Las pruebas leen el PDF real incluido: 27 partidos, 13 nombres únicos y correspondencia exacta de las tres columnas en todas las filas. También cubren fechas cortas, huecos, grafías originales, normalización, cambios de horario, UID estable y plegado ICS. Las pruebas de Google utilizan respuestas simuladas para comprobar conversión, identidad original tras editar, calendarios editables, preferencias, permisos denegados, caducidad, reconexión, paginación, duplicados, coincidencias antiguas, cambios pendientes, reintentos, errores 401/403/409/429/503, fallos de red y bloqueo de importaciones simultáneas.
+
+Las pruebas de Apple cubren selección y varios eventos en un solo archivo, datos editados, duración propia y predeterminada, medianoche, verano/invierno y cambios de hora de Madrid, caracteres especiales y saltos de línea, plegado UTF-8, UID estable al repetir/corregir exportaciones, recordatorios, avisos de validación y enlace de descarga persistente con el clic automático bloqueado. La importación real en dispositivos Apple requiere verificación manual.
 
 El inicio de sesión y la creación real de eventos requieren configurar OAuth y verificarlos con una cuenta autorizada. El OCR y el comportamiento visual en iPhone/iPad requieren comprobación en esos dispositivos.

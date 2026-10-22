@@ -21,15 +21,8 @@ export async function stableId(g) {
   const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map(v=>v.toString(16).padStart(2,'0')).join('');
 }
-const stamp = d => d.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}/,'');
-const escape = s => String(s||'').replace(/\\/g,'\\\\').replace(/\r?\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;');
 export function fold(line) {
   const chunks=[]; let current=''; let length=0;
   for (const c of line) {const bytes=new TextEncoder().encode(c).length; if(length+bytes>75){chunks.push(current);current=' ';length=1;} current+=c;length+=bytes;}
   chunks.push(current);return chunks.join('\r\n');
-}
-export async function createICS(games,duration,reminder=0) {
-  const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Voley Calendar//ES','CALSCALE:GREGORIAN','METHOD:PUBLISH','X-WR-TIMEZONE:Europe/Madrid'];
-  for (const g of games) { const {start,end}=getDates(g,duration); lines.push('BEGIN:VEVENT',`UID:${await stableId(g)}@voley-calendar.local`,`DTSTAMP:${stamp(new Date())}`,`DTSTART:${stamp(start)}`,`DTEND:${stamp(end)}`,`SUMMARY:${escape(title(g))}`,`LOCATION:${escape(g.venue)}`,`DESCRIPTION:${escape(description(g))}`); if(reminder>0)lines.push('BEGIN:VALARM','ACTION:DISPLAY',`DESCRIPTION:${escape(title(g))}`,`TRIGGER:-PT${reminder}M`,'END:VALARM'); lines.push('END:VEVENT'); }
-  return lines.concat('END:VCALENDAR').map(fold).join('\r\n')+'\r\n';
 }

@@ -1,7 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {orderedGames,eventGame,prepareEvent,duplicateGroups} from '../src/prepare.js';
-import {getDates,createICS} from '../src/calendar.js';
+import {getDates} from '../src/calendar.js';
+import {generateICS as createICS} from '../src/ics.js';
 
 const game = overrides => ({id:crypto.randomUUID(),date:'2026-10-17',time:'10:00',home:'Equipo local',away:'Equipo visitante',venue:'Pabellón municipal',category:'Júnior',first:'Germán Ruiz',second:'Alba Jiménez',scorer:'Lucía Rojas',selected:true,...overrides});
 

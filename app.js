@@ -1,12 +1,14 @@
 import {blank, normalize, referees, functionsFor, filterGames, refereeKeys} from './src/model.js';
 import {readPDF} from './src/pdf.js';
 import {extractPage} from './src/extract.js';
-import {getDates,createICS,title} from './src/calendar.js';
+import {getDates,title} from './src/calendar.js';
 import {createGoogleService,preferredCalendar} from './src/google.js';
 import {captureOriginal} from './src/google-identity.js';
 import {orderedGames,eventGame,prepareEvent,duplicateGroups} from './src/prepare.js';
+import {generateICS as createICS,offerICSDownload} from './src/ics.js';
 const $=id=>document.getElementById(id);
 let games=[],files=[],busy=false;
+let appleBusy=false,appleDownload;
 const progress=text=>$('status').textContent=text;
 const selectedName=()=>normalize($('referee').value||$('refereeSelect').value);
 const googleClientId=import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim()||'';
@@ -119,7 +121,19 @@ function selectedGames(){
   return selected.map(g=>roleGame(captureOriginal(g)));
 }
 const reminder=()=>{const n=Number($('reminder').value);if(!Number.isInteger(n)||n<0||n>10080)throw Error('Recordatorio válido: de 0 a 10080 minutos');return n;};
-$('ics').onclick=async()=>{try{const items=selectedGames(),ics=await createICS(items,$('duration').value,reminder()),url=URL.createObjectURL(new Blob([ics],{type:'text/calendar;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='voley-calendar.ics';a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);$('exportStatus').textContent=`Archivo ICS generado: ${items.length} partidos.`;}catch(e){$('exportStatus').textContent=e.message;}};
+$('ics').onclick=async()=>{
+  if(appleBusy)return;
+  try{
+    if(!filterGames(games,selectedName()).some(g=>g.selected))throw Error('Selecciona al menos un partido para exportar a Apple Calendar.');
+    const items=structuredClone(selectedGames()),duration=Number($('duration').value),alarm=reminder();
+    appleBusy=true;$('ics').disabled=true;$('exportStatus').textContent='Preparando archivo para Apple Calendar…';
+    const ics=await createICS(items,duration,alarm);
+    appleDownload?.revoke();appleDownload=offerICSDownload(ics,$('icsDownload'));
+    $('exportStatus').textContent=`Archivo ICS preparado con ${items.length} partido(s). Si no se inicia la descarga, pulsa «Descargar archivo .ics».`;
+  }catch(e){$('exportStatus').textContent=e.message;}
+  finally{appleBusy=false;$('ics').disabled=busy;}
+};
+window.addEventListener('pagehide',event=>{if(!event.persisted)appleDownload?.revoke();});
 let googleBusy=false,googleConnecting=false,calendars=[],batch=null,expiryTimer;
 const googleResults=new Map();
 const googleService=createGoogleService({onState:state=>{

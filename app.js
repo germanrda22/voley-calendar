@@ -7,18 +7,20 @@ import {captureOriginal} from './src/google-identity.js';
 import {eventGame} from './src/prepare.js';
 import {generateICS,offerICSDownload} from './src/ics.js';
 import {validateRound} from './src/round-sync.js';
+import {assessExtraction,formatDiagnostic,gameDiagnostics} from './src/extraction-diagnostics.js';
 const $=id=>document.getElementById(id);
 const clientId=import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim()||'';
-let games=[],headers=[],file=null,calendars=[],reading=false,connecting=false,working=false,reliable=false,version=0,plan=null,previewKey='',download,autoCheck;
+let games=[],headers=[],scannedPages=[],file=null,calendars=[],reading=false,connecting=false,working=false,version=0,plan=null,previewKey='',download,autoCheck;
 const service=createGoogleService({onState:()=>{refresh();autoCheck?.schedule();}});
 const name=()=>$('referee').value.trim();
 function snapshot(){
-  const detection=detectRound(games,headers);
+  const assessment=assessExtraction(games,headers,{referee:name(),scannedPages}),detection=assessment.detection;
   if(!file||!games.length)throw Error('Selecciona un PDF de designaciones.');
   if(!normalize(name()))throw Error('Selecciona tu nombre como árbitro.');
   if(!service.isConnected()||!calendars.some(c=>c.id===$('calendar').value))throw Error('Conecta Google y selecciona un calendario de destino.');
   if(detection.source!=='header')throw Error('No hay una cabecera de jornada inequívoca. No se sustituirán eventos.');
-  const scope=automaticScope(detection,{calendar:$('calendar').value,referee:name(),extractionReliable:reliable,complete:true});
+  if(assessment.selectedErrors.length||assessment.documentErrors.length)throw Error([...new Set([...assessment.selectedErrors,...assessment.documentErrors].map(formatDiagnostic))].join('\n'));
+  const scope=automaticScope(detection,{calendar:$('calendar').value,referee:name(),extractionReliable:assessment.selectedValid,documentIntegrity:assessment.documentComplete,complete:assessment.documentComplete});
   const selected=filterGames(games,normalize(name())).map(g=>eventGame(g,name()));
   validateRound(selected,scope);
   return {games:selected,scope,version};
@@ -30,6 +32,8 @@ function refresh(){
   $('images').disabled=reading||working; $('selectPDF').disabled=$('images').disabled; $('referee').disabled=working||reading;
   $('calendar').disabled=!service.isConnected()||working||reading||connecting;
   const detection=detectRound(games,headers);
+  const assessment=assessExtraction(games,headers,{referee:name(),scannedPages});
+  $('extractionDiagnostics').textContent=assessment.diagnostics.length?assessment.diagnostics.map(formatDiagnostic).join('\n'):'Sin incidencias de extracción.';
   $('round').textContent=detection.from?`${detection.from} — ${detection.to}`:'Pendiente de PDF';
   $('count').textContent=String(name()?filterGames(games,normalize(name())).length:games.length);
   let reason='';try{snapshot();}catch(e){reason=e.message;}
@@ -47,16 +51,18 @@ function changed(){version++;plan=null;previewKey='';$('result').textContent='';
 $('selectPDF').onclick=()=>{if(!$('images').disabled)$('images').click();};
 $('images').onchange=async event=>{
   if(working||reading)return;
-  file=event.target.files[0]||null;games=[];headers=[];reliable=false;changed();
+  file=event.target.files[0]||null;games=[];headers=[];scannedPages=[];changed();
   $('files').textContent=file?.name||'Ningún archivo seleccionado';
   if(!file)return;
   reading=true;refresh();
   try{
     const result=await readPDF(file,text=>$('status').textContent=text);
     games=result.games.map(captureOriginal);headers=result.headers;
-    reliable=games.length>0&&!result.scannedPages.length&&games.every(g=>!g.ambiguous&&!g.manual&&!g.issues.length);
+    scannedPages=result.scannedPages;
     const names=referees(games);$('names').replaceChildren(...names.map(([,name])=>new Option(name,name)));
-    $('status').textContent=reliable?`${games.length} partidos extraídos.`:'PDF con incidencias de extracción: la sustitución está bloqueada.';
+    const assessment=assessExtraction(games,headers,{referee:name(),scannedPages});
+    const warnings=assessment.diagnostics.filter(d=>d.severity==='warning').length;
+    $('status').textContent=`${games.length} partidos extraídos · ${warnings} advertencia(s) de formato. La validez se comprueba para el árbitro seleccionado y la integridad del documento por separado.`;
   }catch(e){$('status').textContent=e.message;}
   finally{reading=false;changed();}
 };
@@ -98,7 +104,8 @@ $('ics').onclick=async()=>{
   try{
     const selected=filterGames(games,normalize(name())).map(g=>eventGame(g,name()));
     if(!selected.length)throw Error('No hay partidos del árbitro seleccionado.');
-    if(selected.some(g=>g.ambiguous||g.manual||g.issues.length))throw Error('Los partidos del árbitro tienen incidencias. Revisa el PDF antes de exportar.');
+    const errors=selected.flatMap(gameDiagnostics).filter(d=>d.severity==='error');
+    if(errors.length)throw Error(errors.map(formatDiagnostic).join('\n'));
     const ics=await generateICS(selected,120,0);download?.revoke();download=offerICSDownload(ics,$('icsDownload'));
     $('result').textContent=`ICS preparado con ${selected.length} partidos.`;
   }catch(e){$('result').textContent=e.message;}

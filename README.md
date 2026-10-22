@@ -30,3 +30,11 @@ La exportación **Apple Calendar (ICS)** es independiente de la conexión con Go
 La verificación con una cuenta real requiere OAuth y una comprobación visual local. Nunca se escriben eventos reales durante los tests. El parser PDF corregido no se modifica para este flujo.
 
 Vercel utiliza `VITE_GOOGLE_CLIENT_ID` y el origen configurado en Google Cloud. Antes de desplegar hay que superar todas las pruebas y la compilación; el despliegue necesita una sesión de Vercel y acceso al proyecto correspondiente.
+
+## Diagnóstico y alcance de las incidencias
+
+El diagnóstico de extracción muestra severidad, página, partido y campo. Un desbordamiento se considera advertencia únicamente cuando el valor completo de la celda se conserva en el texto original y no hay errores de validación. Los indicadores originales del parser se conservan; la clasificación se realiza en `src/extraction-diagnostics.js`.
+
+La validez del árbitro seleccionado se evalúa independientemente de los campos de otros árbitros. La integridad documental se comprueba con todas las fechas, una única cabecera, páginas leídas, ausencia de duplicados y asignaciones arbitrales seguras. Una asignación desconocida en otra fila puede ocultar una designación del árbitro y bloquea las retiradas. Los errores críticos ajenos que no afectan a la identificación ni a la integridad permanecen visibles en el diagnóstico.
+
+El PDF real del 19–25 de octubre contiene dos avisos de desbordamiento del anotador DANIEL SANCHEZ-HOLGADO, ambos en la página 1. Sus 39 filas y los cinco partidos de GERMAN RUIZ se validan sin convertir esas advertencias en un bloqueo global. La confirmación del usuario de que el PDF representa la jornada completa sigue siendo obligatoria antes de sincronizar; una cabecera válida no demuestra por sí sola que no se hayan recortado filas.

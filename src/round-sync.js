@@ -2,13 +2,15 @@
 import {validDay} from './round.js';
 import {managed,privateData,sameRef,origin,hash,fingerprint,metadata,strongMatch,differences} from './sync.js';
 import {duplicateGroups,prepareEvent} from './prepare.js';
+import {gameDiagnostics,formatDiagnostic} from './extraction-diagnostics.js';
 
 export function validateRound(games,scope,duration=120){
   if(!scope.calendar||!normalize(scope.referee))throw Error('Selecciona árbitro y calendario.');
-  if(!scope.extractionReliable||scope.documentPartial||scope.needsConfirmation||scope.deletionsAllowed===false||!scope.complete)throw Error('Sustitución bloqueada: PDF incompleto, ambiguo o con errores de extracción.');
+  if(!scope.extractionReliable||scope.documentPartial||scope.documentIntegrity===false||scope.needsConfirmation||scope.deletionsAllowed===false||!scope.complete)throw Error('Sustitución bloqueada: PDF incompleto, ambiguo o con errores de extracción.');
   if(!validDay(scope.from)||!validDay(scope.to)||scope.from>scope.to||!scope.round||!scope.automatic)throw Error('No se ha identificado una jornada inequívoca.');
   for(const g of games){
-    if(g.ambiguous||g.manual||g.issues?.length)throw Error('El PDF contiene partidos ambiguos o con errores.');
+    const errors=gameDiagnostics(g).filter(d=>d.severity==='error');
+    if(errors.length)throw Error('Partidos ambiguos o incompletos: '+errors.map(formatDiagnostic).join('\n'));
     for(const key of ['date','time','home','away','venue','category','role'])if(!g[key]?.trim())throw Error(`Partido incompleto: falta ${key}.`);
     if(normalize(g.referee)!==normalize(scope.referee)||g.date<scope.from||g.date>scope.to)throw Error('Partido fuera de la jornada o de otro árbitro.');
     prepareEvent(g,g.referee,duration);

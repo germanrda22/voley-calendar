@@ -20,7 +20,8 @@ test('pantalla única: PDF, árbitro, consulta automática, confirmación y resu
     globalThis.window={confirm:()=>{confirmed++;return true;},addEventListener(){}};
     globalThis.localStorage={getItem:()=>null,setItem(){}};
     globalThis.Option=class {constructor(text,value){this.text=text;this.value=value;}};
-    globalThis.__roundUITest={service,readPDF:async()=>({games:[g],headers:[{from:'2026-10-19',to:'2026-10-25'}],scannedPages:[]})};
+    const other={...g,id:'other',home:'Otro local',scorer:'DANIEL SANCHEZ-HOLGADO',first:'Otro árbitro',ambiguous:true,issues:['Texto que cruza columnas: scorer'],notes:'Página 1: Otro local | Visitante | Pabellón | Otro árbitro | DANIEL SANCHEZ-HOLGADO'};
+    globalThis.__roundUITest={service,readPDF:async()=>({games:[g,other],headers:[{from:'2026-10-19',to:'2026-10-25'}],scannedPages:[]})};
     let source=fs.readFileSync('app.js','utf8')
       .replace("import {readPDF} from './src/pdf.js';",'const {readPDF}=globalThis.__roundUITest;')
       .replace("import {createGoogleService,preferredCalendar} from './src/google.js';",'const createGoogleService=()=>globalThis.__roundUITest.service;const preferredCalendar=items=>items[0].id;')
@@ -38,6 +39,7 @@ test('pantalla única: PDF, árbitro, consulta automática, confirmación y resu
     const loading=elements.images.onchange({target:{files:[{name:'Jornada.pdf'}]}});
     assert(elements.selectPDF.disabled);elements.selectPDF.onclick();assert.equal(filePickerOpened,1);
     await loading;assert(!elements.selectPDF.disabled);
+    assert.match(elements.extractionDiagnostics.textContent,/Advertencia · Página 1 · Otro local vs Visitante · anotador/);
     assert.equal(elements.files.textContent,'Jornada.pdf');assert.equal(synced,0);
     elements.referee.value='German Ruiz';elements.referee.oninput();
     await inspectedSignal;
@@ -47,6 +49,8 @@ test('pantalla única: PDF, árbitro, consulta automática, confirmación y resu
     await elements.syncRound.onclick();assert.equal(confirmed,1);assert.equal(synced,1);
     assert.match(elements.result.textContent,/Creados: 1 · Eliminados: 1/);
     assert(!html.includes('id="syncRows"'));assert(!html.includes('id="applySync"'));
+    g.time='25:00';elements.referee.oninput();
+    assert(elements.syncRound.disabled);assert.match(elements.reason.textContent,/Error crítico.*Local vs Visitante.*hora/);
     // Disconnect so the deferred post-sync refresh performs no further request.
     elements.disconnect.onclick();
   }finally{

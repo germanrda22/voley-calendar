@@ -150,3 +150,24 @@ test('PDF reales original/actualizado: jornada completa y retirada, segunda sinc
   assert.equal(repeated.created,0);assert.equal(repeated.deleted,0);assert.equal(repeated.unchanged,5);
   assert(h.calls.every(c=>c.method==='GET'));
 });
+
+test('PDF real 19–25 con avisos ajenos: consulta, sincroniza cinco partidos y conserva eventos ajenos',async()=>{
+  const fs=await import('node:fs'),{getDocument}=await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const {extractPage}=await import('../src/extract.js'),{findHeaderIntervals,automaticScope}=await import('../src/round.js');
+  const {assessExtraction}=await import('../src/extraction-diagnostics.js'),{eventGame}=await import('../src/prepare.js'),{filterGames}=await import('../src/model.js');
+  const pdf=await getDocument({data:new Uint8Array(fs.readFileSync('fixtures/DESIGNACION ARBITRAL DEL 19 AL 25 DE OCTUBRE DE 2026.pdf'))}).promise;
+  const all=[],headers=[];
+  try{for(let n=1;n<=pdf.numPages;n++){const page=await pdf.getPage(n),text=await page.getTextContent();all.push(...extractPage(text.items,page.getViewport({scale:1}).width,n));headers.push(...findHeaderIntervals(text.items.map(i=>i.str).join(' ')));}}
+  finally{await pdf.destroy();}
+  const assessment=assessExtraction(all,headers,{referee:'GERMAN RUIZ'});
+  const selectedScope=automaticScope(assessment.detection,{calendar:'VOLEY',referee:'GERMAN RUIZ',extractionReliable:assessment.selectedValid,documentIntegrity:assessment.documentComplete,complete:assessment.documentComplete});
+  const selected=filterGames(all,'GERMAN RUIZ').map(g=>({...eventGame(g,'GERMAN RUIZ'),documentRound:selectedScope}));
+  const h=harness(),old=await h.seed(game('retired',{documentRound:selectedScope}));
+  const personal={id:'personal',etag:'p',summary:'🏐 Personal',start:{dateTime:'2026-10-24T10:00:00Z'}};h.events.set(personal.id,personal);
+  const preview=await h.sync.inspect(selected,selectedScope);assert.equal(preview.new,5);assert.equal(preview.replacing,1);
+  const result=await h.sync.synchronize(selected,selectedScope);
+  assert.equal(result.created,5);assert.equal(result.deleted,1);assert.deepEqual(result.errors,[]);
+  assert.equal(h.events.get(old.id).status,'cancelled');assert.notEqual(h.events.get(personal.id).status,'cancelled');
+  const repeated=await h.sync.synchronize(selected,selectedScope);assert.equal(repeated.created,0);assert.equal(repeated.deleted,0);assert.equal(repeated.unchanged,5);
+  await assert.rejects(()=>h.sync.synchronize(selected,{...selectedScope,documentIntegrity:false}),/bloqueada/);
+});

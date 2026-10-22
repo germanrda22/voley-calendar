@@ -2,14 +2,14 @@ import {blank, normalize, referees, functionsFor, filterGames, refereeKeys} from
 import {readPDF} from './src/pdf.js';
 import {extractPage} from './src/extract.js';
 import {getDates,createICS,title} from './src/calendar.js';
-import {connect,exportGoogle} from './src/google.js';
+import {createGoogleService,preferredCalendar} from './src/google.js';
+import {captureOriginal} from './src/google-identity.js';
 import {orderedGames,eventGame,prepareEvent,duplicateGroups} from './src/prepare.js';
 const $=id=>document.getElementById(id);
 let games=[],files=[],busy=false;
 const progress=text=>$('status').textContent=text;
 const selectedName=()=>normalize($('referee').value||$('refereeSelect').value);
-$('clientId').value=localStorage.getItem('voley_google_client')||'';
-$('clientId').onchange=e=>localStorage.setItem('voley_google_client',e.target.value.trim());
+const googleClientId=import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim()||'';
 $('images').onchange=e=>{files=[...e.target.files];$('files').textContent=files.map(f=>f.name).join(' · ');$('scan').disabled=!files.length;progress(`${files.length} documento(s) preparado(s)`);};
 function refreshNames(){
   const previous=$('refereeSelect').value, names=referees(games);
@@ -25,6 +25,7 @@ function updateSummary(){
   $('exportSummary').textContent=selectedName()?`${selected.length} partido(s) seleccionado(s) para exportar · Europe/Madrid`:'Selecciona un árbitro para preparar los eventos.';
   $('duplicateStatus').textContent=duplicates.length?`Posibles duplicados: ${duplicates.length} grupo(s). Corrige o deselecciona las repeticiones antes de exportar.\n`+duplicates.map(group=>`${group[0].date} ${group[0].time} · ${group[0].home} vs ${group[0].away} (${group.length} partidos)`).join('\n'):'';
   for(const card of $('games').children)if(card.dataset.gameId)card.classList.toggle('possible-duplicate',duplicates.some(group=>group.some(g=>g.id===card.dataset.gameId)));
+  syncGoogleUI();
 }
 function validation(g){
   const errors=[]; const value=roleGame(g);
@@ -58,7 +59,7 @@ function render(){
       if(refereeKeys.includes(key))input.onchange=()=>{refreshNames();render();};
       field.append(input);grid.append(field);
     }
-    const review=document.createElement('label'),reviewCheck=document.createElement('input');reviewCheck.type='checkbox';reviewCheck.style.width='auto';reviewCheck.checked=g.reviewed;reviewCheck.onchange=()=>{g.reviewed=reviewCheck.checked;update();};review.append(reviewCheck,document.createTextNode(' He revisado las advertencias y contrastado las funciones con el documento'));
+    const review=document.createElement('label'),reviewCheck=document.createElement('input');reviewCheck.type='checkbox';reviewCheck.style.width='auto';reviewCheck.checked=g.reviewed;reviewCheck.onchange=()=>{g.reviewed=reviewCheck.checked;update();syncGoogleUI();};review.append(reviewCheck,document.createTextNode(' He revisado las advertencias y contrastado las funciones con el documento'));
     function updatePreview(){
       try{const event=prepareEvent(g,refereeName(),$('duration').value);previewText.textContent=[event.summary,`Ubicación: ${event.location || 'Sin especificar'}`,event.description,`Zona horaria: ${event.start.timeZone}`].join('\n');}
       catch(e){previewText.textContent=`${title(roleGame(g))}\n${e.message}`;}
@@ -87,6 +88,7 @@ async function ocr(source,page,worker){
 }
 async function scan(useOCR=false){
   if(busy)return;busy=true;$('scan').disabled=true;$('ocr').disabled=true;$('images').disabled=true;
+  batch=null;googleResults.clear();showGoogleResults();syncGoogleUI();
   let worker;const next=[],warnings=[];
   try{
     const needsOCR=useOCR||files.some(f=>f.type.startsWith('image/'));
@@ -102,10 +104,10 @@ async function scan(useOCR=false){
         else warnings.push(`Formato no admitido: ${file.name}`);
       }catch(e){warnings.push(`${file.name}: ${e.message}`);}
     }
-    games=next;refreshNames();render();$('ocr').hidden=!missingText;
+    games=next.map(captureOriginal);refreshNames();render();$('ocr').hidden=!missingText;
     progress([`${games.length} partidos extraídos. Selecciona un árbitro y revisa sus partidos.`,...warnings].join(' '));
   }catch(e){progress('Error de lectura: '+e.message);}
-  finally{if(worker)await worker.terminate();busy=false;$('scan').disabled=!files.length;$('ocr').disabled=false;$('images').disabled=false;}
+  finally{if(worker)await worker.terminate();busy=false;$('scan').disabled=!files.length;$('ocr').disabled=false;$('images').disabled=false;syncGoogleUI();}
 }
 $('scan').onclick=()=>scan();$('ocr').onclick=()=>scan(true);
 function selectedGames(){
@@ -114,10 +116,86 @@ function selectedGames(){
   if(!selected.length)throw Error('Selecciona al menos un partido');
   for(const g of selected)if(validation(g).length)throw Error('Completa y revisa todos los partidos seleccionados: '+validation(g).join(' · '));
   if(duplicateGroups(selected.map(roleGame),$('duration').value).length)throw Error('Hay posibles duplicados seleccionados. Corrígelos o deselecciona las repeticiones antes de exportar.');
-  return selected.map(roleGame);
+  return selected.map(g=>roleGame(captureOriginal(g)));
 }
 const reminder=()=>{const n=Number($('reminder').value);if(!Number.isInteger(n)||n<0||n>10080)throw Error('Recordatorio válido: de 0 a 10080 minutos');return n;};
 $('ics').onclick=async()=>{try{const items=selectedGames(),ics=await createICS(items,$('duration').value,reminder()),url=URL.createObjectURL(new Blob([ics],{type:'text/calendar;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='voley-calendar.ics';a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);$('exportStatus').textContent=`Archivo ICS generado: ${items.length} partidos.`;}catch(e){$('exportStatus').textContent=e.message;}};
-$('connect').onclick=async()=>{try{$('connect').disabled=true;$('exportStatus').textContent='Esperando autorización de Google…';const calendars=await connect($('clientId').value.trim());$('calendar').replaceChildren(...calendars.map(c=>new Option(c.summary,c.id)));$('exportStatus').textContent=`Sesión iniciada. ${calendars.length} calendarios disponibles.`;}catch(e){$('exportStatus').textContent=e.message;}finally{$('connect').disabled=false;}};
-$('google').onclick=async()=>{try{$('google').disabled=true;const items=selectedGames(),messages=[];$('exportStatus').textContent='Comprobando duplicados…';await exportGoogle(items,$('calendar').value,$('duration').value,reminder(),(g,result)=>{messages.push(`${title(g)}: ${result}`);$('exportStatus').textContent=messages.join('\n');});}catch(e){$('exportStatus').textContent=e.message;}finally{$('google').disabled=false;}};
+let googleBusy=false,googleConnecting=false,calendars=[],batch=null,expiryTimer;
+const googleResults=new Map();
+const googleService=createGoogleService({onState:state=>{
+  clearTimeout(expiryTimer);syncGoogleUI();
+  if(state.connected)expiryTimer=setTimeout(()=>{syncGoogleUI();$('googleStatus').textContent='La sesión ha caducado. Conecta Google de nuevo.';},Math.max(0,state.expiresAt-Date.now()+10));
+}});
+const resultLabels={checking:'Comprobando duplicados…',creating:'Creando evento…',created:'Creado (confirmado por Google)',existing:'Ya existente',pending:'Pendiente de actualización (sin modificar)',review:'Coincidencia dudosa: revisar en Google (sin crear)',error:'Error'};
+function syncGoogleUI(){
+  const connected=googleService.isConnected(),selected=filterGames(games,selectedName()).filter(g=>g.selected);
+  const valid=!!selectedName()&&selected.length>0&&selected.every(g=>!validation(g).length)&&!duplicateGroups(selected.map(roleGame),$('duration').value).length;
+  $('connect').disabled=googleBusy||googleConnecting||busy||!googleClientId;
+  $('disconnect').disabled=googleBusy||googleConnecting||!connected;
+  $('calendar').disabled=googleBusy||googleConnecting||!connected;
+  $('google').disabled=googleBusy||googleConnecting||busy||!connected||!$('calendar').value||!valid;
+  $('retryGoogle').hidden=![...googleResults.values()].some(r=>r.status==='error');
+  $('retryGoogle').disabled=googleBusy||googleConnecting||busy||!connected||!batch||batch.calendar!==$('calendar').value;
+  $('scan').disabled=googleBusy||busy||!files.length;$('images').disabled=googleBusy||busy;$('ocr').disabled=googleBusy||busy;
+  $('googleConnection').textContent=googleConnecting?'Conectando…':connected?'Cuenta conectada':'Sin conexión con Google';
+}
+function calendarDetails(){
+  const calendar=calendars.find(c=>c.id===$('calendar').value);
+  $('calendarDescription').textContent=calendar?.description||'';
+}
+function showGoogleResults(){
+  $('googleResults').replaceChildren();
+  const counts={created:0,existing:0,pending:0,review:0,error:0};
+  for(const result of googleResults.values()){
+    if(result.status in counts)counts[result.status]++;
+    const item=document.createElement('li');item.className=result.status==='error'?'warning':'';
+    item.textContent=`${result.game.date} ${result.game.time} · ${title(result.game)}: ${resultLabels[result.status]}${result.detail?' — '+result.detail:''}`;
+    for(const match of result.matches||[]){
+      const detail=document.createElement('p');detail.className='muted';detail.textContent=`En Google: ${match.summary||'Sin título'} · ${match.start?.dateTime||match.start?.date||''} · ${match.location||'Sin ubicación'}`;
+      if(match.htmlLink?.startsWith('https://calendar.google.com/')||match.htmlLink?.startsWith('https://www.google.com/calendar/')){const link=document.createElement('a');link.href=match.htmlLink;link.target='_blank';link.rel='noopener noreferrer';link.textContent=' Abrir en Google Calendar';detail.append(link);}
+      item.append(detail);
+    }
+    $('googleResults').append(item);
+  }
+  const finished=[...googleResults.values()].filter(r=>r.status in counts).length;
+  $('googleImportSummary').textContent=batch?`${googleBusy?'Progreso':'Resultado'}: ${finished}/${batch.games.length} · ${counts.created} creados · ${counts.existing} existentes · ${counts.pending} pendientes de actualización · ${counts.review} para revisión · ${counts.error} errores. Calendario: ${batch.calendarName}`:'';
+}
+$('calendar').onchange=()=>{localStorage.setItem('voley_google_calendar',$('calendar').value);calendarDetails();syncGoogleUI();};
+$('connect').onclick=async()=>{
+  if(googleBusy||googleConnecting)return;
+  googleConnecting=true;syncGoogleUI();$('googleStatus').textContent='Esperando autorización de Google…';
+  try{
+    calendars=await googleService.connect(googleClientId);
+    $('calendar').replaceChildren(...calendars.map(c=>new Option(c.summary||c.id,c.id)));
+    $('calendar').value=preferredCalendar(calendars,localStorage.getItem('voley_google_calendar'));
+    if($('calendar').value)localStorage.setItem('voley_google_calendar',$('calendar').value);
+    calendarDetails();$('googleStatus').textContent=calendars.length?'Selecciona el calendario de destino.':'No hay calendarios con permiso para crear eventos.';
+  }catch(e){calendars=[];$('calendar').replaceChildren(new Option('Conecta Google para seleccionar',''));calendarDetails();$('googleStatus').textContent=e.message;}
+  finally{googleConnecting=false;syncGoogleUI();}
+};
+$('disconnect').onclick=()=>{googleService.disconnect();calendars=[];$('calendar').replaceChildren(new Option('Conecta Google para seleccionar',''));calendarDetails();$('googleStatus').textContent='Google desconectado. El token se ha eliminado de la memoria.';syncGoogleUI();};
+async function runGoogle(retry=false){
+  if(googleBusy)return;
+  try{
+    if(!googleService.isConnected())throw Error('Conecta Google antes de importar.');
+    let items;
+    if(retry){
+      if(!batch||batch.calendar!==$('calendar').value)throw Error('Selecciona el calendario de la importación anterior para reintentar.');
+      items=[...googleResults.values()].filter(r=>r.status==='error').map(r=>r.game);
+    }else{
+      items=structuredClone(selectedGames());
+      batch={games:items,calendar:$('calendar').value,calendarName:calendars.find(c=>c.id===$('calendar').value)?.summary||$('calendar').value,duration:Number($('duration').value),reminder:reminder()};
+      googleResults.clear();
+    }
+    if(!items.length)throw Error('No hay partidos fallidos para reintentar.');
+    googleBusy=true;syncGoogleUI();
+    for(const game of items)googleResults.set(game.id,{game,status:'checking'});
+    showGoogleResults();$('googleStatus').textContent=retry?'Reintentando únicamente los partidos fallidos con los datos de la importación anterior…':'Importación en curso…';
+    await googleService.importGames(items,batch.calendar,batch.duration,batch.reminder,result=>{googleResults.set(result.game.id,result);showGoogleResults();});
+    $('googleStatus').textContent='Proceso terminado. Consulta el resultado de cada partido.';
+  }catch(e){$('googleStatus').textContent=e.message;}
+  finally{googleBusy=false;showGoogleResults();syncGoogleUI();}
+}
+$('google').onclick=()=>runGoogle();$('retryGoogle').onclick=()=>runGoogle(true);
+if(!googleClientId)$('googleStatus').textContent='Configura VITE_GOOGLE_CLIENT_ID en .env.local y reinicia Vite para conectar Google.';
 render();

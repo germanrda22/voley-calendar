@@ -1,7 +1,7 @@
 import {prepareEvent} from './prepare.js';
 import {normalize,functionsFor} from './model.js';
 import {assignmentId} from './google-identity.js';
-import {createSyncService,metadata,matchesSource,strongMatch} from './sync.js';
+import {createSyncService,metadata,matchesSource,strongMatch,hash} from './sync.js';
 import {createRoundSync} from './round-sync.js';
 
 export const scopes=['https://www.googleapis.com/auth/calendar.events','https://www.googleapis.com/auth/calendar.calendarlist.readonly'];
@@ -44,14 +44,18 @@ export function classifyExisting(events,payload,game) {
 
 export function createGoogleService({fetcher=(...args)=>fetch(...args),oauth=()=>window.google?.accounts?.oauth2,now=()=>Date.now(),sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),onState=()=>{}}={}) {
   let token='',expiresAt=0,epoch=0,connecting=false,importing=false;
+  let accountKey='',allowedCalendars=new Set();
   const isConnected=()=>!!token && now()<expiresAt;
-  const notify=()=>onState({connected:isConnected(),expiresAt,connecting,importing});
-  function clear(){token='';expiresAt=0;epoch++;notify();}
+  const notify=()=>onState({connected:isConnected(),expiresAt,connecting,importing,accountKey});
+  function clear(){token='';expiresAt=0;accountKey='';allowedCalendars.clear();epoch++;notify();}
   function disconnect(){const previous=token;clear();if(previous)try{oauth()?.revoke(previous,()=>{});}catch{/* Local disconnection already completed. */}}
   async function request(path,options={}) {
     const generation=epoch;
     for(let attempt=0;attempt<3;attempt++) {
+      if(generation!==epoch)throw new GoogleError(401,'La cuenta ha cambiado. Vuelve a comprobar la jornada.');
       if(!isConnected()) {clear();throw new GoogleError(401,'La sesión ha caducado. Conecta Google de nuevo.');}
+      const calendar=/^calendars\/([^/]+)\//.exec(path)?.[1];
+      if(calendar&&!allowedCalendars.has(decodeURIComponent(calendar)))throw new GoogleError(403,'El calendario no pertenece a la lista autorizada de esta cuenta.');
       let response;
       try{response=await fetcher(`https://www.googleapis.com/calendar/v3/${path}`,{...options,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',...options.headers},signal:AbortSignal.timeout(30000)});}
       catch(e){if(generation!==epoch)throw new GoogleError(401,'Conexión cerrada.');if(attempt<2){await sleep(500*2**attempt);continue;}throw new GoogleError(0,'Error temporal de red. Puedes reintentar este partido.');}
@@ -62,6 +66,7 @@ export function createGoogleService({fetcher=(...args)=>fetch(...args),oauth=()=
         if(response.ok){if(attempt<2){await sleep(500*2**attempt);continue;}throw new GoogleError(0,'Respuesta incompleta de Google. Reintenta para comprobar el resultado.');}
         body={};
       }
+      if(generation!==epoch)throw new GoogleError(401,'La cuenta ha cambiado. Vuelve a comprobar la jornada.');
       if(response.ok)return body;
       if(response.status===401){clear();throw new GoogleError(401,'Google ha caducado o revocado la sesión. Vuelve a conectar.');}
       const reason=body.error?.errors?.[0]?.reason;
@@ -96,7 +101,12 @@ export function createGoogleService({fetcher=(...args)=>fetch(...args),oauth=()=
           settled=true;clearTimeout(timeout);token=response.access_token;expiresAt=now()+(Number(response.expires_in)-30)*1000;resolve();
         },error_callback:error=>fail(error.type==='popup_closed'?'Has cerrado la ventana de Google. Puedes volver a conectar.':'No se pudo abrir la autorización de Google. Permite las ventanas emergentes.')}).requestAccessToken({prompt:'select_account'});}catch(e){fail(e.message);}
       });
-      const calendars=writableCalendars(await list('users/me/calendarList',{minAccessRole:'writerWithoutPrivateAccess',maxResults:'250'}));
+      const calendars=writableCalendars(await list('users/me/calendarList',{minAccessRole:'writer',maxResults:'250'}));
+      if(generation!==epoch)throw new GoogleError(401,'Conexión cancelada.');
+      const primary=calendars.find(c=>c.primary);
+      const key=primary?.id?await hash(['voley-account-preferences',primary.id]):'';
+      if(generation!==epoch)throw new GoogleError(401,'Conexión cancelada.');
+      allowedCalendars=new Set(calendars.map(c=>c.id));accountKey=key;
       notify();return calendars;
     }catch(e){clear();throw e;}finally{connecting=false;notify();}
   }
@@ -145,14 +155,17 @@ export function createGoogleService({fetcher=(...args)=>fetch(...args),oauth=()=
   }
   const sync=createSyncService({request,list,buildEvent:googleEvent});
   const roundSync=createRoundSync({request,list,buildEvent:googleEvent});
+  const planSessions=new WeakMap();
+  const requirePlanSession=plan=>{if(planSessions.get(plan)!==epoch)throw Error('La cuenta o sesión ha cambiado. Comprueba la jornada de nuevo.');};
   async function exclusive(operation){
     if(importing||connecting)throw Error('Ya hay una operación de Google en curso.');
     if(!isConnected())throw new GoogleError(401,'Conecta Google para comprobar o aplicar cambios.');
     importing=true;notify();try{return await operation();}finally{importing=false;notify();}
   }
-  return {connect,disconnect,isConnected,importGames,
+  return {connect,disconnect,isConnected,importGames,getAccountKey:()=>isConnected()?accountKey:'',
     inspectRound:(...args)=>exclusive(()=>roundSync.inspect(...args)),
     synchronizeRound:(...args)=>exclusive(()=>roundSync.synchronize(...args)),
-    checkChanges:(...args)=>exclusive(()=>sync.checkChanges(...args)),
-    applyChanges:(...args)=>exclusive(()=>sync.applyChanges(...args)),resolveChange:sync.resolveRow};
+    checkChanges:(...args)=>exclusive(async()=>{const generation=epoch,plan=await sync.checkChanges(...args);if(generation!==epoch)throw new GoogleError(401,'La cuenta ha cambiado.');planSessions.set(plan,generation);return plan;}),
+    applyChanges:(plan,...args)=>exclusive(()=>{requirePlanSession(plan);return sync.applyChanges(plan,...args);}),
+    resolveChange:(plan,...args)=>{requirePlanSession(plan);return sync.resolveRow(plan,...args);}};
 }

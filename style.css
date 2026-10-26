@@ -471,3 +471,14 @@ body:not([data-page="/nueva"]) .shell{padding-bottom:32px}
 body[data-page="/revision"] .shell{padding-bottom:32px}
 #sync-step{scroll-margin-top:20px}
 @media(max-width:760px){.access-panel{padding:24px}.action-dock .toolbar>a{font-size:11px;justify-content:center;padding:10px 12px}}
+
+/* Native mobile pickers live outside document stacking/overflow contexts. */
+.referee-picker{margin-block:20px;min-width:0}
+.referee-picker>label{display:block;margin-top:12px}
+.referee-picker select,.referee-picker input,#calendar{width:100%;max-width:100%;min-height:48px;font-size:16px}
+.referee-picker details{margin-top:12px}
+.shell,.panel,header,.toolbar{min-width:0;max-width:100%}
+button{min-height:44px;max-width:100%;white-space:normal}
+dd{margin-inline-start:0;overflow-wrap:anywhere}
+#reason{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:620px){.shell{padding:0 12px 28px}.shell>header{padding-inline:12px}.shell>header .toolbar{width:100%;margin-top:0}.shell>header button{flex:1 1 140px}.brand{overflow-wrap:anywhere;font-size:20px}.panel{padding:16px}.pdf-picker button,#syncRound{width:100%}}

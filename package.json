@@ -1,1 +1,19 @@
-{"name":"voley-calendar","version":"1.0.0","private":true,"type":"module","scripts":{"dev":"vite --host 0.0.0.0","build":"vite build","test":"node --test"},"dependencies":{"pdfjs-dist":"^5.4.296"},"devDependencies":{"vite":"^7.1.7"}}
+{
+  "name": "voley-calendar",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "test": "node --test",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^5.4.296"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "vite": "^7.1.7"
+  }
+}

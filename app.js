@@ -1,5 +1,5 @@
 ﻿import {createAutoCheck} from './src/auto-check.js';
-import {normalize,referees,filterGames} from './src/model.js';
+import {normalize,filterGames} from './src/model.js';
 import {readPDF} from './src/pdf.js';
 import {detectRound,automaticScope} from './src/round.js';
 import {createGoogleService,preferredCalendar} from './src/google.js';
@@ -8,11 +8,20 @@ import {eventGame} from './src/prepare.js';
 import {generateICS,offerICSDownload} from './src/ics.js';
 import {validateRound} from './src/round-sync.js';
 import {assessExtraction,formatDiagnostic,gameDiagnostics} from './src/extraction-diagnostics.js';
+import {createAccountPreferences} from './src/account-preferences.js';
+import {setupRefereePicker} from './src/referee-picker.js';
 const $=id=>document.getElementById(id);
 const clientId=import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim()||'';
 let games=[],headers=[],scannedPages=[],file=null,calendars=[],reading=false,connecting=false,working=false,version=0,plan=null,previewKey='',download,autoCheck;
-const service=createGoogleService({onState:()=>{refresh();autoCheck?.schedule();}});
-const name=()=>$('referee').value.trim();
+let picker,hadSession=false,activeAccount='';
+const preferences=createAccountPreferences(localStorage);
+const service=createGoogleService({onState:state=>{
+  if(!state.connected&&activeAccount){activeAccount='';preferences.useAccount('');calendars=[];$('calendar').replaceChildren(new Option('Conecta Google',''));picker?.setName('');plan=null;previewKey='';version++;autoCheck?.reset();}
+  refresh();autoCheck?.schedule();
+}});
+const name=()=>picker?.getName()||'';
+const savePreferences=()=>preferences.save({referee:name(),calendar:$('calendar').value});
+picker=setupRefereePicker({onChange:()=>{savePreferences();changed();}});
 function snapshot(){
   const assessment=assessExtraction(games,headers,{referee:name(),scannedPages}),detection=assessment.detection;
   if(!file||!games.length)throw Error('Selecciona un PDF de designaciones.');
@@ -29,7 +38,8 @@ function key(){try{return JSON.stringify(snapshot());}catch{return null;}}
 function refresh(){
   $('connect').disabled=connecting||working||reading||!clientId;
   $('disconnect').disabled=!service.isConnected()||working||reading||connecting;
-  $('images').disabled=reading||working; $('selectPDF').disabled=$('images').disabled; $('referee').disabled=working||reading;
+  $('images').disabled=reading||working||connecting; $('selectPDF').disabled=$('images').disabled;picker.setDisabled(working||reading||connecting);
+  $('connect').textContent=service.isConnected()?'Cambiar cuenta de Google':'Conectar Google Calendar';
   $('calendar').disabled=!service.isConnected()||working||reading||connecting;
   const detection=detectRound(games,headers);
   const assessment=assessExtraction(games,headers,{referee:name(),scannedPages});
@@ -51,7 +61,8 @@ function changed(){version++;plan=null;previewKey='';$('result').textContent='';
 $('selectPDF').onclick=()=>{if(!$('images').disabled)$('images').click();};
 $('images').onchange=async event=>{
   if(working||reading)return;
-  file=event.target.files[0]||null;games=[];headers=[];scannedPages=[];changed();
+  const selectedName=name();
+  file=event.target.files[0]||null;games=[];headers=[];scannedPages=[];picker.setGames([]);picker.setName(selectedName);changed();
   $('files').textContent=file?.name||'Ningún archivo seleccionado';
   if(!file)return;
   reading=true;refresh();
@@ -59,27 +70,37 @@ $('images').onchange=async event=>{
     const result=await readPDF(file,text=>$('status').textContent=text);
     games=result.games.map(captureOriginal);headers=result.headers;
     scannedPages=result.scannedPages;
-    const names=referees(games);$('names').replaceChildren(...names.map(([,name])=>new Option(name,name)));
+    const previousName=name();picker.setGames(games);picker.setName(previousName);
     const assessment=assessExtraction(games,headers,{referee:name(),scannedPages});
     const warnings=assessment.diagnostics.filter(d=>d.severity==='warning').length;
     $('status').textContent=`${games.length} partidos extraídos · ${warnings} advertencia(s) de formato. La validez se comprueba para el árbitro seleccionado y la integridad del documento por separado.`;
   }catch(e){$('status').textContent=e.message;}
   finally{reading=false;changed();}
 };
-$('referee').oninput=changed;
-$('calendar').onchange=()=>{localStorage.setItem('voley_google_calendar',$('calendar').value);changed();};
+$('calendar').onchange=()=>{savePreferences();changed();};
+function resetSession(){
+  autoCheck?.reset();activeAccount='';preferences.useAccount('');calendars=[];games=[];headers=[];scannedPages=[];file=null;
+  $('images').value='';$('files').textContent='Ningún archivo seleccionado';$('calendar').replaceChildren(new Option('Conecta Google',''));
+  picker.setGames([]);picker.setName('');download?.revoke();download=null;$('icsDownload').hidden=true;
+  $('status').textContent='';changed();
+}
 $('connect').onclick=async()=>{
   if(connecting||working||reading)return;
+  if(hadSession)resetSession();
   connecting=true;refresh();$('status').textContent='Esperando autorización de Google…';
   try{
     calendars=await service.connect(clientId);
+    hadSession=true;activeAccount=service.getAccountKey?.()||'';preferences.useAccount(activeAccount);
+    const saved=preferences.load();
     $('calendar').replaceChildren(...calendars.map(c=>new Option(c.summary||c.id,c.id)));
-    $('calendar').value=preferredCalendar(calendars,localStorage.getItem('voley_google_calendar'));
+    $('calendar').value=preferredCalendar(calendars,saved.calendar);
+    if(saved.referee)picker.setName(saved.referee);
+    savePreferences();
     $('status').textContent='Google conectado. Selecciona el PDF y tu nombre.';
   }catch(e){calendars=[];$('status').textContent=e.message;}
   finally{connecting=false;changed();}
 };
-$('disconnect').onclick=()=>{if(working)return;service.disconnect();calendars=[];$('calendar').replaceChildren(new Option('Conecta Google',''));changed();};
+$('disconnect').onclick=()=>{if(working||reading)return;service.disconnect();resetSession();};
 autoCheck=createAutoCheck({getKey:()=>reading||working||connecting?null:key(),check:async()=>{
   const before=key(),data=snapshot();
   try{
